@@ -35,6 +35,12 @@ impl Framebuffer {
         self.z_buffer.fill(f32::INFINITY);
     }
 
+    pub fn set_pixel_with_color(&mut self, x: i32, y: i32, color: Color) {
+        if x >= 0 && y >= 0 && x < self.width as i32 && y < self.height as i32 {
+            self.color_buffer.draw_pixel(x, y, color);
+        }
+    }
+
     /// Dibuja un píxel con verificación de límites
     pub fn set_pixel(&mut self, x: i32, y: i32) {
         if x >= 0 && y >= 0 && x < self.width as i32 && y < self.height as i32 {

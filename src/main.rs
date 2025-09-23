@@ -1,4 +1,4 @@
-// main.rs
+// main.rs - Optimized version
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
@@ -8,7 +8,7 @@ mod maze;
 mod player;
 mod caster;
 mod textures;
-mod enemy; // 👈 Agregado
+mod enemy;
 
 use textures::TextureManager;
 use caster::cast_ray;
@@ -18,8 +18,8 @@ use std::thread;
 use std::time::Duration;
 use framebuffer::Framebuffer;
 use line::line;
-use maze::{Maze,load_maze};
-use enemy::Enemy; // 👈 Importación del Enemy
+use maze::{Maze, load_maze};
+use enemy::Enemy;
 
 use std::f32::consts::PI;
 
@@ -91,12 +91,12 @@ pub fn render_3d(
     let num_rays = framebuffer.width;
     let hh = framebuffer.height as f32 / 2.0;
 
-    framebuffer.set_current_color(Color::WHITESMOKE);
-    
-    for i in 0..num_rays {
-        let current_ray = i as f32 / num_rays as f32;
+    // Pre-calculate some values
+    let fov_step = player.fov / num_rays as f32;
+    let angle_start = player.a - (player.fov / 2.0);
 
-        let ray_angle = player.a - (player.fov / 2.0) + (player.fov * current_ray);
+    for i in 0..num_rays {
+        let ray_angle = angle_start + (i as f32 * fov_step);
         let angle_diff = ray_angle - player.a;
 
         let intersect = cast_ray(framebuffer, &maze, &player, ray_angle, block_size, false);
@@ -104,19 +104,28 @@ pub fn render_3d(
         let d = intersect.distance;
         let impact = intersect.impact;
         
-        let corrected_distance = d * angle_diff.cos() as f32;
-        let stake_height = (hh as f32 / corrected_distance) * 70.0;
+        // Corrected distance to avoid fisheye effect
+        let corrected_distance = d * angle_diff.cos();
+        let stake_height = (hh / corrected_distance) * 70.0;
         let half_stake_height = stake_height / 2.0;
-        let stake_top = (hh as f32 - half_stake_height) as usize;
-        let stake_bottom = (hh as f32 + half_stake_height) as usize;
+        let stake_top = (hh - half_stake_height).max(0.0) as usize;
+        let stake_bottom = (hh + half_stake_height).min(framebuffer.height as f32) as usize;
 
+        // Skip if wall is too small to see
+        if stake_bottom <= stake_top {
+            continue;
+        }
+
+        // Pre-calculate texture sampling values
+        let tx = intersect.tx;
+        let wall_height = stake_bottom - stake_top;
+        
+        // Render wall column
         for y in stake_top..stake_bottom {
-            let tx = intersect.tx;
-            let ty = (y as f32 - stake_top as f32) / (stake_bottom as f32 - stake_top as f32) * 128.0; 
-            let color = texture_cache.get_pixel_color(impact, tx as u32, ty as u32);
+            let ty = ((y - stake_top) * 128 / wall_height) as u32;
+            let color = texture_cache.get_pixel_color(impact, tx as u32, ty);
 
-            framebuffer.set_current_color(color);
-            framebuffer.set_pixel(i as i32, y as i32);   
+            framebuffer.set_pixel_with_color(i as i32, y as i32, color);
         }
     }
 }
@@ -129,6 +138,8 @@ fn draw_sprite(
 ) {
     let sprite_a = (enemy.pos.y - player.pos.y).atan2(enemy.pos.x - player.pos.x);
     let mut angle_diff = sprite_a - player.a;
+    
+    // Normalize angle difference
     while angle_diff > PI {
         angle_diff -= 2.0 * PI;
     }
@@ -136,12 +147,14 @@ fn draw_sprite(
         angle_diff += 2.0 * PI;
     }
 
+    // Early culling: don't render if outside FOV
     if angle_diff.abs() > player.fov / 2.0 {
         return;
     }
 
     let sprite_d = ((player.pos.x - enemy.pos.x).powi(2) + (player.pos.y - enemy.pos.y).powi(2)).sqrt();
 
+    // Distance culling
     if sprite_d < 50.0 || sprite_d > 1000.0 {
         return;
     }
@@ -154,20 +167,26 @@ fn draw_sprite(
 
     let start_x = (screen_x - sprite_size / 2.0).max(0.0) as usize;
     let start_y = (screen_height / 2.0 - sprite_size / 2.0).max(0.0) as usize;
-    let sprite_size_usize = sprite_size as usize;
-    let end_x = (start_x + sprite_size_usize).min(framebuffer.width as usize);
-    let end_y = (start_y + sprite_size_usize).min(framebuffer.height as usize);
+    let end_x = (start_x + sprite_size as usize).min(framebuffer.width as usize);
+    let end_y = (start_y + sprite_size as usize).min(framebuffer.height as usize);
+
+    // Skip tiny sprites
+    if end_x <= start_x || end_y <= start_y {
+        return;
+    }
+
+    let sprite_width = end_x - start_x;
+    let sprite_height = end_y - start_y;
 
     for x in start_x..end_x {
         for y in start_y..end_y {
-            let tx = ((x - start_x) * 128 / sprite_size_usize) as u32;
-            let ty = ((y - start_y) * 128 / sprite_size_usize) as u32;
+            let tx = ((x - start_x) * 128 / sprite_width) as u32;
+            let ty = ((y - start_y) * 128 / sprite_height) as u32;
 
             let color = texture_manager.get_pixel_color(enemy.texture_key, tx, ty);
             
-            if color != TRANSPARENT_COLOR {
-                framebuffer.set_current_color(color);
-                framebuffer.set_pixel(x as i32, y as i32);
+            if color.a > 128 { // Simple alpha test instead of full comparison
+                framebuffer.set_pixel_with_color(x as i32, y as i32, color);
             }
         }
     }
@@ -176,45 +195,56 @@ fn draw_sprite(
 fn render_enemies(
     framebuffer: &mut Framebuffer,
     player: &Player,
+    enemies: &[Enemy],
     texture_cache: &TextureManager,
 ) {
+    for enemy in enemies {
+        draw_sprite(framebuffer, player, enemy, texture_cache);
+    }
+}
+
+fn main() {
+    let window_width = 800; // Reduced from 1300 for better performance
+    let window_height = 600; // Reduced from 900 for better performance
+    let block_size = 100;
+
+    let (mut window, raylib_thread) = raylib::init()
+        .size(window_width, window_height)
+        .title("FNAF Doom - Optimized")
+        .log_level(TraceLogLevel::LOG_WARNING)
+        .build();
+
+    let mut framebuffer = Framebuffer::new(
+        window_width as u32, 
+        window_height as u32, 
+        Color::new(50, 50, 100, 255)
+    );
+
+    let maze = load_maze("./maze.txt").expect("Failed to load maze");
+    let mut player = Player { 
+        pos: Vector2::new(150.0, 150.0),
+        a: (PI / 2.0) as f32,
+        fov: (PI / 3.0) as f32, // Slightly narrower FOV for performance
+    }; 
+
+    // Create enemies once at startup
     let enemies = vec![
         Enemy::new(250.0, 250.0, 'b'),
         Enemy::new(350.0, 300.0, 'f'),
         Enemy::new(350.0, 350.0, 'c'),
     ];
-    for enemy in enemies {
-        draw_sprite(framebuffer, player, &enemy, texture_cache);
-    }
-}
-
-fn main() {
-    let window_width = 1300;
-    let window_height = 900;
-    let block_size = 100;
-
-    let (mut window, raylib_thread) = raylib::init()
-        .size(window_width, window_height)
-        .title("Raycaster Example")
-        .log_level(TraceLogLevel::LOG_WARNING)
-        .build();
-
-    let mut framebuffer = Framebuffer::new(window_width as u32, window_height as u32,  Color::new(50, 50, 100, 255));
-
-    framebuffer.set_background_color(Color::new(50, 50, 100, 255));
-
-    let maze = load_maze("./maze.txt").expect("Failed to load maze");
-    let mut player = Player{ 
-        pos: Vector2::new(150.0, 150.0),
-        a: (PI / 2.0) as f32,
-        fov: (PI / 2.0) as f32,
-    }; 
 
     let mut mode = "3D";
     let texture_cache = TextureManager::new(&mut window, &raylib_thread);
-    let delta_time = 0.016; // Aproximadamente 60 FPS
+    let target_fps = 60;
+    window.set_target_fps(target_fps);
+
+    let mut frame_count = 0;
+    let mut fps_timer = std::time::Instant::now();
 
     while !window.window_should_close() {
+        let delta_time = window.get_frame_time();
+        
         framebuffer.clear();
         process_events(&window, &mut player, delta_time);
 
@@ -226,10 +256,17 @@ fn main() {
            render_maze(&mut framebuffer, &maze, block_size, &mut player);
         } else {
             render_3d(&mut framebuffer, &maze, block_size, &mut player, &texture_cache);
-            render_enemies(&mut framebuffer, &player, &texture_cache);
+            render_enemies(&mut framebuffer, &player, &enemies, &texture_cache);
         }    
 
         framebuffer.swap_buffers(&mut window, &raylib_thread);
-        thread::sleep(Duration::from_millis(16));
+
+        // Simple FPS counter for debugging
+        frame_count += 1;
+        if fps_timer.elapsed().as_secs() >= 1 {
+            println!("FPS: {}", frame_count);
+            frame_count = 0;
+            fps_timer = std::time::Instant::now();
+        }
     }
 }
