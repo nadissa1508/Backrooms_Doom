@@ -120,6 +120,15 @@ pub fn render_3d(
         let stake_top = (hh - half_stake_height).max(0.0) as usize;
         let stake_bottom = (hh + half_stake_height).min(framebuffer.height as f32) as usize;
 
+        // Pintar techo (de arriba hasta el inicio de la pared)
+        for y in 0..stake_top {
+            framebuffer.set_pixel_with_color(i as i32, y as i32, Color::BLACK);
+        }
+        // Pintar piso (del final de la pared hasta abajo)
+        for y in stake_bottom..framebuffer.height as usize {
+            framebuffer.set_pixel_with_color(i as i32, y as i32, Color::new(35, 35, 35, 255)); // gris oscuro
+        }
+
         // Skip if wall is too small to see
         if stake_bottom <= stake_top {
             continue;
@@ -230,8 +239,8 @@ fn render_enemies(
 }
 
 fn main() {
-    let window_width = 800; // Reduced from 1300 for better performance
-    let window_height = 600; // Reduced from 900 for better performance
+    let window_width = 1100; // Reduced from 1300 for better performance
+    let window_height = 700; // Reduced from 900 for better performance
     let block_size = 100;
 
     let (mut window, raylib_thread) = raylib::init()
