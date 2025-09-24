@@ -2,36 +2,30 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-mod line;
+mod caster;
+mod enemy;
 mod framebuffer;
+mod line;
 mod maze;
 mod player;
-mod caster;
 mod textures;
-mod enemy;
 
-use textures::TextureManager;
 use caster::cast_ray;
+use enemy::Enemy;
+use framebuffer::Framebuffer;
+use line::line;
+use maze::{Maze, load_maze};
 use player::{Player, process_events};
 use raylib::prelude::*;
 use std::thread;
 use std::time::Duration;
-use framebuffer::Framebuffer;
-use line::line;
-use maze::{Maze, load_maze};
-use enemy::Enemy;
+use textures::TextureManager;
 
 use std::f32::consts::PI;
 
 const TRANSPARENT_COLOR: Color = Color::new(0, 0, 0, 0);
 
-fn draw_cell(
-    framebuffer: &mut Framebuffer,
-    xo: usize,
-    yo: usize,
-    block_size: usize,
-    cell: char,
-) {
+fn draw_cell(framebuffer: &mut Framebuffer, xo: usize, yo: usize, block_size: usize, cell: char) {
     if cell == ' ' {
         return;
     }
@@ -55,7 +49,7 @@ pub fn render_maze(
         for (col_index, &cell) in row.iter().enumerate() {
             let xo = col_index * block_size;
             let yo = row_index * block_size;
-            
+
             draw_cell(framebuffer, xo, yo, block_size, cell);
         }
     }
@@ -65,10 +59,7 @@ pub fn render_maze(
     let player_size = 10;
     for dx in 0..player_size {
         for dy in 0..player_size {
-            framebuffer.set_pixel(
-                player.pos.x as i32 + dx,
-                player.pos.y as i32 + dy,
-            );
+            framebuffer.set_pixel(player.pos.x as i32 + dx, player.pos.y as i32 + dy);
         }
     }
 
@@ -103,18 +94,18 @@ pub fn render_3d(
 
         let d = intersect.distance;
         let impact = intersect.impact;
-        
+
         // Skip empty spaces
         if impact == ' ' || d > 9999.0 {
             continue;
         }
-        
+
         // Corrected distance to avoid fisheye effect
         let corrected_distance = d * angle_diff.cos();
         if corrected_distance <= 0.1 {
             continue; // Skip if too close
         }
-        
+
         let stake_height = (hh / corrected_distance) * 70.0;
         let half_stake_height = stake_height / 2.0;
         let stake_top = (hh - half_stake_height).max(0.0) as usize;
@@ -137,19 +128,19 @@ pub fn render_3d(
         // Pre-calculate texture sampling values
         let tx = intersect.tx;
         let wall_height = stake_bottom - stake_top;
-        
+
         // Render wall column
         for y in stake_top..stake_bottom {
             let ty = if wall_height > 0 {
-                ((y - stake_top) * 512 / wall_height) as u32  // Changed to 512 for your new texture size
+                ((y - stake_top) * 512 / wall_height) as u32 // Changed to 512 for your new texture size
             } else {
                 0
             };
-            
+
             // Clamp texture coordinates to prevent edge artifacts
-            let tx_clamped = (tx as u32).min(511);  // Changed to 511 for 512x512 textures
+            let tx_clamped = (tx as u32).min(511); // Changed to 511 for 512x512 textures
             let ty_clamped = ty.min(511);
-            
+
             let color = texture_cache.get_pixel_color(impact, tx_clamped, ty_clamped);
 
             framebuffer.set_pixel_with_color(i as i32, y as i32, color);
@@ -161,11 +152,11 @@ fn draw_sprite(
     framebuffer: &mut Framebuffer,
     player: &Player,
     enemy: &Enemy,
-    texture_manager: &TextureManager
+    texture_manager: &TextureManager,
 ) {
     let sprite_a = (enemy.pos.y - player.pos.y).atan2(enemy.pos.x - player.pos.x);
     let mut angle_diff = sprite_a - player.a;
-    
+
     // Normalize angle difference
     while angle_diff > PI {
         angle_diff -= 2.0 * PI;
@@ -179,7 +170,8 @@ fn draw_sprite(
         return;
     }
 
-    let sprite_d = ((player.pos.x - enemy.pos.x).powi(2) + (player.pos.y - enemy.pos.y).powi(2)).sqrt();
+    let sprite_d =
+        ((player.pos.x - enemy.pos.x).powi(2) + (player.pos.y - enemy.pos.y).powi(2)).sqrt();
 
     // Distance culling - allow closer sprites for better detail
     if sprite_d < 20.0 || sprite_d > 1500.0 {
@@ -219,8 +211,9 @@ fn draw_sprite(
             let ty_clamped = ty.min(texture_size as u32 - 1);
 
             let color = texture_manager.get_pixel_color(enemy.texture_key, tx_clamped, ty_clamped);
-            
-            if color.a > 128 { // Simple alpha test
+
+            if color.a > 128 {
+                // Simple alpha test
                 framebuffer.set_pixel_with_color(x as i32, y as i32, color);
             }
         }
@@ -240,7 +233,7 @@ fn render_enemies(
 
 fn main() {
     let window_width = 1100; // Reduced from 1300 for better performance
-    let window_height = 700; // Reduced from 900 for better performance
+    let window_height = 800; // Reduced from 900 for better performance
     let block_size = 100;
 
     let (mut window, raylib_thread) = raylib::init()
@@ -250,20 +243,20 @@ fn main() {
         .build();
 
     let mut framebuffer = Framebuffer::new(
-        window_width as u32, 
-        window_height as u32, 
-        Color::new(50, 50, 100, 255)
+        window_width as u32,
+        window_height as u32,
+        Color::new(50, 50, 100, 255),
     );
 
     let maze = load_maze("./maze.txt").expect("Failed to load maze");
-    
-    let mut player = Player { 
+
+    let mut player = Player {
         pos: Vector2::new(150.0, 150.0),
         a: (PI / 2.0) as f32,
         fov: (PI / 3.0) as f32,
-    }; 
+    };
 
-    // Create enemies once at startup  
+    // Create enemies once at startup
     let enemies = vec![
         Enemy::new(250.0, 250.0, 'b'),
         Enemy::new(350.0, 300.0, 'f'),
@@ -280,20 +273,26 @@ fn main() {
 
     while !window.window_should_close() {
         let delta_time = window.get_frame_time();
-        
+
         framebuffer.clear();
-        process_events(&window, &mut player, delta_time);
+        process_events(&window, &mut player, delta_time, &maze, block_size);
 
         if window.is_key_pressed(KeyboardKey::KEY_M) {
             mode = if mode == "2D" { "3D" } else { "2D" };
         }
-        
+
         if mode == "2D" {
-           render_maze(&mut framebuffer, &maze, block_size, &mut player);
+            render_maze(&mut framebuffer, &maze, block_size, &mut player);
         } else {
-            render_3d(&mut framebuffer, &maze, block_size, &mut player, &texture_cache);
+            render_3d(
+                &mut framebuffer,
+                &maze,
+                block_size,
+                &mut player,
+                &texture_cache,
+            );
             render_enemies(&mut framebuffer, &player, &enemies, &texture_cache);
-        }    
+        }
 
         framebuffer.swap_buffers(&mut window, &raylib_thread);
 
