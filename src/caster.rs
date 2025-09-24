@@ -1,5 +1,5 @@
-// caster.rs
-use raylib::prelude::Color; // más estable que raylib::color::Color
+// caster.rs - Fixed for 512x512 textures
+use raylib::prelude::Color;
 use crate::framebuffer::Framebuffer;
 use crate::player::Player;
 use crate::maze::Maze;
@@ -112,7 +112,7 @@ pub fn cast_ray(
     }
 
     if !hit {
-        // No chocó con nada: devuelve un “miss” largo y vacío
+        // No chocó con nada: devuelve un "miss" largo y vacío
         return Intersect {
             distance: 10_000.0,
             impact: ' ',
@@ -131,7 +131,7 @@ pub fn cast_ray(
         ((wall_y - ry) + if step_y < 0 { block } else { 0.0 }) / rdy
     }.abs();
 
-    // Cálculo de coordenada de textura (tx en 0..127)
+    // Cálculo de coordenada de textura (tx en 0..511) - FIXED FOR 512x512 TEXTURES
     // Hallamos el punto exacto de impacto en coordenadas de mundo y tomamos su fracción dentro del bloque.
     let hit_world_x = rx + rdx * perp_dist;
     let hit_world_y = ry + rdy * perp_dist;
@@ -144,12 +144,13 @@ pub fn cast_ray(
         (hit_world_x / block) - (hit_world_x / block).floor()
     };
 
-    // Opcional: invertir para caras “mirando” hacia el otro lado
+    // Opcional: invertir para caras "mirando" hacia el otro lado
     if (hit_side_x && rdx > 0.0) || (!hit_side_x && rdy < 0.0) {
         tex_u = 1.0 - tex_u;
     }
 
-    let tx = (tex_u * 128.0) as usize % 128;
+    // FIXED: Changed from 128 to 512 for 512x512 textures
+    let tx = (tex_u * 512.0) as usize % 512;
 
     Intersect {
         distance: perp_dist.max(0.0001),

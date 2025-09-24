@@ -104,8 +104,17 @@ pub fn render_3d(
         let d = intersect.distance;
         let impact = intersect.impact;
         
+        // Skip empty spaces
+        if impact == ' ' || d > 9999.0 {
+            continue;
+        }
+        
         // Corrected distance to avoid fisheye effect
         let corrected_distance = d * angle_diff.cos();
+        if corrected_distance <= 0.1 {
+            continue; // Skip if too close
+        }
+        
         let stake_height = (hh / corrected_distance) * 70.0;
         let half_stake_height = stake_height / 2.0;
         let stake_top = (hh - half_stake_height).max(0.0) as usize;
@@ -122,8 +131,17 @@ pub fn render_3d(
         
         // Render wall column
         for y in stake_top..stake_bottom {
-            let ty = ((y - stake_top) * 128 / wall_height) as u32;
-            let color = texture_cache.get_pixel_color(impact, tx as u32, ty);
+            let ty = if wall_height > 0 {
+                ((y - stake_top) * 512 / wall_height) as u32  // Changed to 512 for your new texture size
+            } else {
+                0
+            };
+            
+            // Clamp texture coordinates to prevent edge artifacts
+            let tx_clamped = (tx as u32).min(511);  // Changed to 511 for 512x512 textures
+            let ty_clamped = ty.min(511);
+            
+            let color = texture_cache.get_pixel_color(impact, tx_clamped, ty_clamped);
 
             framebuffer.set_pixel_with_color(i as i32, y as i32, color);
         }
@@ -154,15 +172,16 @@ fn draw_sprite(
 
     let sprite_d = ((player.pos.x - enemy.pos.x).powi(2) + (player.pos.y - enemy.pos.y).powi(2)).sqrt();
 
-    // Distance culling
-    if sprite_d < 50.0 || sprite_d > 1000.0 {
+    // Distance culling - allow closer sprites for better detail
+    if sprite_d < 20.0 || sprite_d > 1500.0 {
         return;
     }
 
     let screen_height = framebuffer.height as f32;
     let screen_width = framebuffer.width as f32;
 
-    let sprite_size = (screen_height / sprite_d) * 70.0;
+    // Make sprites bigger and more detailed when close
+    let sprite_size = (screen_height / sprite_d) * 120.0; // Increased from 70.0
     let screen_x = ((angle_diff / player.fov) + 0.5) * screen_width;
 
     let start_x = (screen_x - sprite_size / 2.0).max(0.0) as usize;
@@ -178,14 +197,21 @@ fn draw_sprite(
     let sprite_width = end_x - start_x;
     let sprite_height = end_y - start_y;
 
+    // Use higher resolution sampling for larger sprites
+    let texture_size = if sprite_size > 100.0 { 512 } else { 256 }; // Dynamic texture resolution
+
     for x in start_x..end_x {
         for y in start_y..end_y {
-            let tx = ((x - start_x) * 128 / sprite_width) as u32;
-            let ty = ((y - start_y) * 128 / sprite_height) as u32;
+            let tx = ((x - start_x) * texture_size / sprite_width) as u32;
+            let ty = ((y - start_y) * texture_size / sprite_height) as u32;
 
-            let color = texture_manager.get_pixel_color(enemy.texture_key, tx, ty);
+            // Clamp to prevent edge artifacts
+            let tx_clamped = tx.min(texture_size as u32 - 1);
+            let ty_clamped = ty.min(texture_size as u32 - 1);
+
+            let color = texture_manager.get_pixel_color(enemy.texture_key, tx_clamped, ty_clamped);
             
-            if color.a > 128 { // Simple alpha test instead of full comparison
+            if color.a > 128 { // Simple alpha test
                 framebuffer.set_pixel_with_color(x as i32, y as i32, color);
             }
         }
@@ -221,13 +247,14 @@ fn main() {
     );
 
     let maze = load_maze("./maze.txt").expect("Failed to load maze");
+    
     let mut player = Player { 
         pos: Vector2::new(150.0, 150.0),
         a: (PI / 2.0) as f32,
-        fov: (PI / 3.0) as f32, // Slightly narrower FOV for performance
+        fov: (PI / 3.0) as f32,
     }; 
 
-    // Create enemies once at startup
+    // Create enemies once at startup  
     let enemies = vec![
         Enemy::new(250.0, 250.0, 'b'),
         Enemy::new(350.0, 300.0, 'f'),

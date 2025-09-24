@@ -1,12 +1,16 @@
-// textures.rs
-
+// textures.rs - Fixed version
 use raylib::prelude::*;
 use std::collections::HashMap;
-use std::slice;
+
+pub struct TextureData {
+    pub pixels: Vec<Color>, // Store as Vec<Color> for safer access
+    pub width: u32,
+    pub height: u32,
+}
 
 pub struct TextureManager {
-    images: HashMap<char, Image>,       // para muestreo manual
-    textures: HashMap<char, Texture2D>, // para dibujar en pantalla
+    texture_data: HashMap<char, TextureData>,
+    textures: HashMap<char, Texture2D>, // Keep for potential GPU rendering
 }
 
 impl TextureManager {
@@ -22,55 +26,72 @@ impl TextureManager {
             ('f', "assets/freddy.png"),
         ];
 
-        let mut images = HashMap::new();
+        let mut texture_data = HashMap::new();
         let mut textures = HashMap::new();
 
         for (ch, path) in texture_files {
+            // Try to load image, use fallback if it fails
             let image = Image::load_image(path)
-                .unwrap_or_else(|_| panic!("Failed to load image {}", path));
-            let texture = rl.load_texture(thread, path)
-                .unwrap_or_else(|_| panic!("Failed to load texture {}", path));
+                .unwrap_or_else(|e| {
+                    println!("Warning: Failed to load {}: {:?}", path, e);
+                    println!("Using fallback color for character '{}'", ch);
+                    // Create a larger fallback texture to match your 512x512 images
+                    let fallback_color = match ch {
+                        '.' => Color::GRAY,
+                        '+' => Color::BROWN,
+                        '-' => Color::YELLOW,
+                        '|' => Color::RED,
+                        'g' => Color::GREEN,
+                        'b' => Color::BLUE,
+                        'c' => Color::YELLOW,
+                        'f' => Color::BROWN,
+                        _ => Color::MAGENTA,
+                    };
+                    Image::gen_image_color(512, 512, fallback_color) // Changed to 512x512
+                });
 
-            images.insert(ch, image);
-            textures.insert(ch, texture);
+            // Convert to our safe pixel data format
+            let width = image.width as u32;
+            let height = image.height as u32;
+            let pixels: Vec<Color> = image.get_image_data().to_vec(); // This returns Vec<Color>
+            
+            println!("Loaded texture '{}': {}x{} pixels", ch, width, height);
+            
+            texture_data.insert(ch, TextureData { pixels, width, height });
+
+            // Load texture for potential GPU use
+            if let Ok(texture) = rl.load_texture_from_image(thread, &image) {
+                textures.insert(ch, texture);
+            } else {
+                println!("Warning: Failed to create GPU texture for {}", path);
+            }
         }
 
-        TextureManager { images, textures }
+        TextureManager { texture_data, textures }
     }
 
+    #[inline(always)]
     pub fn get_pixel_color(&self, ch: char, tx: u32, ty: u32) -> Color {
-        if let Some(image) = self.images.get(&ch) {
-            let x = tx.min(image.width as u32 - 1) as i32;
-            let y = ty.min(image.height as u32 - 1) as i32;
-            sample_pixel(image, x, y)
+        if let Some(data) = self.texture_data.get(&ch) {
+            // Ensure coordinates are within bounds
+            let x = tx.min(data.width - 1);
+            let y = ty.min(data.height - 1);
+            let idx = (y * data.width + x) as usize;
+            
+            // Safe array access
+            if idx < data.pixels.len() {
+                data.pixels[idx]
+            } else {
+                Color::MAGENTA // Debug color to indicate out-of-bounds access
+            }
         } else {
+            // Debug: show which characters are missing textures
+            println!("Warning: No texture found for character '{}'", ch);
             Color::WHITE
         }
     }
 
     pub fn get_texture(&self, ch: char) -> Option<&Texture2D> {
         self.textures.get(&ch)
-    }
-}
-
-fn sample_pixel(image: &Image, x: i32, y: i32) -> Color {
-    let width = image.width as usize;
-    let height = image.height as usize;
-
-    if x < 0 || y < 0 || x as usize >= width || y as usize >= height {
-        return Color::WHITE;
-    }
-
-    let data_len = width * height * 4;
-
-    unsafe {
-        let data = slice::from_raw_parts(image.data as *const u8, data_len);
-        let idx = (y as usize * width + x as usize) * 4;
-
-        if idx + 3 >= data_len {
-            return Color::WHITE;
-        }
-
-        Color::new(data[idx], data[idx + 1], data[idx + 2], data[idx + 3])
     }
 }
