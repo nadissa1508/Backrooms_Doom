@@ -18,8 +18,8 @@ impl TextureManager {
         let texture_files = vec![
             ('.', "assets/wall_corner.png"),
             ('+', "assets/wall_fredy.png"),
-            ('-', "assets/wall_chica.png"),
-            ('|', "assets/wall_foxy.png"),
+            ('|', "assets/wall_chica.png"),
+            ('-', "assets/wall_foxy.png"),
             ('g', "assets/wall_draws.png"),
             ('b', "assets/bonnie.png"),
             ('c', "assets/chica.png"),
