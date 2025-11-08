@@ -1,307 +1,150 @@
-// main.rs - Optimized version
-#![allow(unused_imports)]
-#![allow(dead_code)]
-
+mod audio;
+mod camera;
 mod caster;
+mod effects;
 mod enemy;
 mod framebuffer;
-mod line;
+mod game;
 mod maze;
+mod minimap;
 mod player;
+mod sprite;
 mod textures;
+mod ui;
 
-use caster::cast_ray;
-use enemy::Enemy;
-use framebuffer::Framebuffer;
-use line::line;
-use maze::{Maze, load_maze};
-use player::{Player, process_events};
+use audio::AudioManager;
+use game::{GameState, State};
 use raylib::prelude::*;
-use std::thread;
-use std::time::Duration;
-use textures::TextureManager;
 
-use std::f32::consts::PI;
-
-const TRANSPARENT_COLOR: Color = Color::new(0, 0, 0, 0);
-
-fn draw_cell(framebuffer: &mut Framebuffer, xo: usize, yo: usize, block_size: usize, cell: char) {
-    if cell == ' ' {
-        return;
-    }
-
-    framebuffer.set_current_color(Color::RED);
-
-    for x in xo..xo + block_size {
-        for y in yo..yo + block_size {
-            framebuffer.set_pixel(x as i32, y as i32);
-        }
-    }
-}
-
-pub fn render_maze(
-    framebuffer: &mut Framebuffer,
-    maze: &Maze,
-    block_size: usize,
-    player: &mut Player,
-) {
-    for (row_index, row) in maze.iter().enumerate() {
-        for (col_index, &cell) in row.iter().enumerate() {
-            let xo = col_index * block_size;
-            let yo = row_index * block_size;
-
-            draw_cell(framebuffer, xo, yo, block_size, cell);
-        }
-    }
-
-    framebuffer.set_current_color(Color::YELLOW);
-
-    let player_size = 10;
-    for dx in 0..player_size {
-        for dy in 0..player_size {
-            framebuffer.set_pixel(player.pos.x as i32 + dx, player.pos.y as i32 + dy);
-        }
-    }
-
-    let num_rays = 5;
-
-    for i in 0..num_rays {
-        let current_ray = i as f32 / num_rays as f32;
-        let ray_angle = player.a - (player.fov / 2.0) + (player.fov * current_ray);
-        cast_ray(framebuffer, &maze, &player, ray_angle, block_size, true);
-    }
-}
-
-pub fn render_3d(
-    framebuffer: &mut Framebuffer,
-    maze: &Maze,
-    block_size: usize,
-    player: &mut Player,
-    texture_cache: &TextureManager,
-) {
-    let num_rays = framebuffer.width;
-    let hh = framebuffer.height as f32 / 2.0;
-
-    // Pre-calculate some values
-    let fov_step = player.fov / num_rays as f32;
-    let angle_start = player.a - (player.fov / 2.0);
-
-    for i in 0..num_rays {
-        let ray_angle = angle_start + (i as f32 * fov_step);
-        let angle_diff = ray_angle - player.a;
-
-        let intersect = cast_ray(framebuffer, &maze, &player, ray_angle, block_size, false);
-
-        let d = intersect.distance;
-        let impact = intersect.impact;
-
-        // Skip empty spaces
-        if impact == ' ' || d > 9999.0 {
-            continue;
-        }
-
-        // Corrected distance to avoid fisheye effect
-        let corrected_distance = d * angle_diff.cos();
-        if corrected_distance <= 0.1 {
-            continue; // Skip if too close
-        }
-
-        let stake_height = (hh / corrected_distance) * 70.0;
-        let half_stake_height = stake_height / 2.0;
-        let stake_top = (hh - half_stake_height).max(0.0) as usize;
-        let stake_bottom = (hh + half_stake_height).min(framebuffer.height as f32) as usize;
-
-        // Pintar techo (de arriba hasta el inicio de la pared)
-        for y in 0..stake_top {
-            framebuffer.set_pixel_with_color(i as i32, y as i32, Color::BLACK);
-        }
-        // Pintar piso (del final de la pared hasta abajo)
-        for y in stake_bottom..framebuffer.height as usize {
-            framebuffer.set_pixel_with_color(i as i32, y as i32, Color::new(35, 35, 35, 255)); // gris oscuro
-        }
-
-        // Skip if wall is too small to see
-        if stake_bottom <= stake_top {
-            continue;
-        }
-
-        // Pre-calculate texture sampling values
-        let tx = intersect.tx;
-        let wall_height = stake_bottom - stake_top;
-
-        // Render wall column
-        for y in stake_top..stake_bottom {
-            let ty = if wall_height > 0 {
-                ((y - stake_top) * 512 / wall_height) as u32 // Changed to 512 for your new texture size
-            } else {
-                0
-            };
-
-            // Clamp texture coordinates to prevent edge artifacts
-            let tx_clamped = (tx as u32).min(511); // Changed to 511 for 512x512 textures
-            let ty_clamped = ty.min(511);
-
-            let color = texture_cache.get_pixel_color(impact, tx_clamped, ty_clamped);
-
-            framebuffer.set_pixel_with_color(i as i32, y as i32, color);
-        }
-    }
-}
-
-fn draw_sprite(
-    framebuffer: &mut Framebuffer,
-    player: &Player,
-    enemy: &Enemy,
-    texture_manager: &TextureManager,
-) {
-    let sprite_a = (enemy.pos.y - player.pos.y).atan2(enemy.pos.x - player.pos.x);
-    let mut angle_diff = sprite_a - player.a;
-
-    // Normalize angle difference
-    while angle_diff > PI {
-        angle_diff -= 2.0 * PI;
-    }
-    while angle_diff < -PI {
-        angle_diff += 2.0 * PI;
-    }
-
-    // Early culling: don't render if outside FOV
-    if angle_diff.abs() > player.fov / 2.0 {
-        return;
-    }
-
-    let sprite_d =
-        ((player.pos.x - enemy.pos.x).powi(2) + (player.pos.y - enemy.pos.y).powi(2)).sqrt();
-
-    // Distance culling - allow closer sprites for better detail
-    if sprite_d < 20.0 || sprite_d > 1500.0 {
-        return;
-    }
-
-    let screen_height = framebuffer.height as f32;
-    let screen_width = framebuffer.width as f32;
-
-    // Make sprites bigger and more detailed when close
-    let sprite_size = (screen_height / sprite_d) * 120.0; // Increased from 70.0
-    let screen_x = ((angle_diff / player.fov) + 0.5) * screen_width;
-
-    let start_x = (screen_x - sprite_size / 2.0).max(0.0) as usize;
-    let start_y = (screen_height / 2.0 - sprite_size / 2.0).max(0.0) as usize;
-    let end_x = (start_x + sprite_size as usize).min(framebuffer.width as usize);
-    let end_y = (start_y + sprite_size as usize).min(framebuffer.height as usize);
-
-    // Skip tiny sprites
-    if end_x <= start_x || end_y <= start_y {
-        return;
-    }
-
-    let sprite_width = end_x - start_x;
-    let sprite_height = end_y - start_y;
-
-    // Use higher resolution sampling for larger sprites
-    let texture_size = if sprite_size > 100.0 { 512 } else { 256 }; // Dynamic texture resolution
-
-    for x in start_x..end_x {
-        for y in start_y..end_y {
-            let tx = ((x - start_x) * texture_size / sprite_width) as u32;
-            let ty = ((y - start_y) * texture_size / sprite_height) as u32;
-
-            // Clamp to prevent edge artifacts
-            let tx_clamped = tx.min(texture_size as u32 - 1);
-            let ty_clamped = ty.min(texture_size as u32 - 1);
-
-            let color = texture_manager.get_pixel_color(enemy.texture_key, tx_clamped, ty_clamped);
-
-            if color.a > 128 {
-                // Simple alpha test
-                framebuffer.set_pixel_with_color(x as i32, y as i32, color);
-            }
-        }
-    }
-}
-
-fn render_enemies(
-    framebuffer: &mut Framebuffer,
-    player: &Player,
-    enemies: &[Enemy],
-    texture_cache: &TextureManager,
-) {
-    for enemy in enemies {
-        draw_sprite(framebuffer, player, enemy, texture_cache);
-    }
-}
+const SCREEN_WIDTH: usize = 640;
+const SCREEN_HEIGHT: usize = 480;
+const TARGET_FPS: u32 = 60;
 
 fn main() {
-    let window_width = 1100; // Reduced from 1300 for better performance
-    let window_height = 800; // Reduced from 900 for better performance
-    let block_size = 100;
-
-    let (mut window, raylib_thread) = raylib::init()
-        .size(window_width, window_height)
-        .title("FNAF Doom - Optimized")
-        .log_level(TraceLogLevel::LOG_WARNING)
+    // Initialize raylib
+    let (mut rl, thread) = raylib::init()
+        .size(SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32)
+        .title("Backrooms Doom - Raycaster")
         .build();
 
-    let mut framebuffer = Framebuffer::new(
-        window_width as u32,
-        window_height as u32,
-        Color::new(50, 50, 100, 255),
-    );
+    // Initialize audio device
+    let audio = match RaylibAudio::init_audio_device() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to initialize audio: {:?}", e);
+            eprintln!("Continuing without audio...");
+            return;
+        }
+    };
+    audio.set_master_volume(1.0);
+    println!("✓ Audio device initialized");
 
-    let maze = load_maze("./maze.txt").expect("Failed to load maze");
+    // Set target FPS
+    rl.set_target_fps(TARGET_FPS);
 
-    let mut player = Player {
-        pos: Vector2::new(150.0, 150.0),
-        a: (PI / 2.0) as f32,
-        fov: (PI / 3.0) as f32,
+    // Hide cursor for immersive experience
+    rl.hide_cursor();
+
+    // Initialize game state with audio
+    let mut game = match GameState::new(SCREEN_WIDTH, SCREEN_HEIGHT, &audio) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Failed to initialize game: {}", e);
+            return;
+        }
     };
 
-    // Create enemies once at startup
-    let enemies = vec![
-        Enemy::new(250.0, 250.0, 'b'),
-        Enemy::new(350.0, 300.0, 'f'),
-        Enemy::new(350.0, 350.0, 'c'),
-    ];
+    let mut last_state = game.state;
 
-    let mut mode = "3D";
-    let texture_cache = TextureManager::new(&mut window, &raylib_thread);
-    let target_fps = 60;
-    window.set_target_fps(target_fps);
+    // Play menu music on startup
+    game.audio.play_menu_music();
 
-    let mut frame_count = 0;
-    let mut fps_timer = std::time::Instant::now();
+    // Main game loop
+    while !rl.window_should_close() {
+        let delta_time = rl.get_frame_time();
 
-    while !window.window_should_close() {
-        let delta_time = window.get_frame_time();
-
-        framebuffer.clear();
-        process_events(&window, &mut player, delta_time, &maze, block_size);
-
-        if window.is_key_pressed(KeyboardKey::KEY_M) {
-            mode = if mode == "2D" { "3D" } else { "2D" };
+        // Handle state transitions for audio
+        if game.state != last_state {
+            match game.state {
+                State::Playing => {
+                    // Start ambient music when gameplay begins
+                    game.audio.play_background_music();
+                }
+                State::Victory => {
+                    // Stop all music and play victory sound
+                    game.audio.stop_music();
+                    game.audio.play_victory();
+                }
+                State::Menu => {
+                    // Stop gameplay music and play menu music
+                    game.audio.stop_music();
+                    game.audio.play_menu_music();
+                }
+            }
+            last_state = game.state;
         }
 
-        if mode == "2D" {
-            render_maze(&mut framebuffer, &maze, block_size, &mut player);
-        } else {
-            render_3d(
-                &mut framebuffer,
-                &maze,
-                block_size,
-                &mut player,
-                &texture_cache,
+        // Update music stream
+        game.audio.update_music();
+
+        // Update music volume based on distance to goal (dynamic volume)
+        if game.state == State::Playing {
+            let dx = game.player.pos.x - game.maze.goal_pos.0;
+            let dy = game.player.pos.y - game.maze.goal_pos.1;
+            let distance_to_goal = (dx * dx + dy * dy).sqrt();
+            game.audio.update_ambient_volume(distance_to_goal);
+        }
+
+        // Play footstep sounds only when moving
+        if game.state == State::Playing {
+            let is_moving = rl.is_key_down(KeyboardKey::KEY_W)
+                || rl.is_key_down(KeyboardKey::KEY_S)
+                || rl.is_key_down(KeyboardKey::KEY_A)
+                || rl.is_key_down(KeyboardKey::KEY_D);
+
+            if is_moving {
+                game.audio.play_footstep(delta_time);
+            } else {
+                // Reset timer when not moving to prevent delayed footsteps
+                game.audio.reset_footstep_timer();
+            }
+        }
+
+        // Update game state
+        game.update(&rl, delta_time);
+
+        // Render
+        let mut d = rl.begin_drawing(&thread);
+        d.clear_background(Color::BLACK);
+
+        game.render(&mut d);
+
+        // Debug info (optional - can be toggled with F3)
+        if d.is_key_down(KeyboardKey::KEY_F3) {
+            d.draw_text(
+                &format!(
+                    "Player Pos: ({:.2}, {:.2})",
+                    game.player.pos.x, game.player.pos.y
+                ),
+                10,
+                SCREEN_HEIGHT as i32 - 60,
+                16,
+                Color::YELLOW,
             );
-            render_enemies(&mut framebuffer, &player, &enemies, &texture_cache);
-        }
-
-        framebuffer.swap_buffers(&mut window, &raylib_thread);
-
-        // Simple FPS counter for debugging
-        frame_count += 1;
-        if fps_timer.elapsed().as_secs() >= 1 {
-            println!("FPS: {}", frame_count);
-            frame_count = 0;
-            fps_timer = std::time::Instant::now();
+            d.draw_text(
+                &format!("Player Angle: {:.2}°", game.player.angle.to_degrees()),
+                10,
+                SCREEN_HEIGHT as i32 - 40,
+                16,
+                Color::YELLOW,
+            );
+            d.draw_text(
+                &format!("Delta Time: {:.4}s", delta_time),
+                10,
+                SCREEN_HEIGHT as i32 - 20,
+                16,
+                Color::YELLOW,
+            );
         }
     }
 }

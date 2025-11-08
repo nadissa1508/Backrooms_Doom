@@ -1,97 +1,123 @@
-// textures.rs - Fixed version
 use raylib::prelude::*;
 use std::collections::HashMap;
 
-pub struct TextureData {
-    pub pixels: Vec<Color>, // Store as Vec<Color> for safer access
-    pub width: u32,
-    pub height: u32,
-}
-
 pub struct TextureManager {
-    texture_data: HashMap<char, TextureData>,
-    textures: HashMap<char, Texture2D>, // Keep for potential GPU rendering
+    pub textures: HashMap<String, Vec<Color>>,
+    pub texture_size: usize,
 }
 
 impl TextureManager {
-    pub fn new(rl: &mut RaylibHandle, thread: &RaylibThread) -> Self {
-        let texture_files = vec![
-            ('.', "assets/wall_corner.png"),
-            ('+', "assets/wall_fredy.png"),
-            ('|', "assets/wall_chica.png"),
-            ('-', "assets/wall_foxy.png"),
-            ('g', "assets/wall_draws.png"),
-            ('b', "assets/bonnie.png"),
-            ('c', "assets/chica.png"),
-            ('f', "assets/freddy.png"),
-        ];
+    pub fn new(texture_size: usize) -> Self {
+        let mut manager = Self {
+            textures: HashMap::new(),
+            texture_size,
+        };
 
-        let mut texture_data = HashMap::new();
-        let mut textures = HashMap::new();
-
-        for (ch, path) in texture_files {
-            // Try to load image, use fallback if it fails
-            let image = Image::load_image(path)
-                .unwrap_or_else(|e| {
-                    println!("Warning: Failed to load {}: {:?}", path, e);
-                    println!("Using fallback color for character '{}'", ch);
-                    // Create a larger fallback texture to match your 512x512 images
-                    let fallback_color = match ch {
-                        '.' => Color::GRAY,
-                        '+' => Color::BROWN,
-                        '-' => Color::YELLOW,
-                        '|' => Color::RED,
-                        'g' => Color::GREEN,
-                        'b' => Color::BLUE,
-                        'c' => Color::YELLOW,
-                        'f' => Color::BROWN,
-                        _ => Color::MAGENTA,
-                    };
-                    Image::gen_image_color(512, 512, fallback_color) // Changed to 512x512
-                });
-
-            // Convert to our safe pixel data format
-            let width = image.width as u32;
-            let height = image.height as u32;
-            let pixels: Vec<Color> = image.get_image_data().to_vec(); // This returns Vec<Color>
-            
-            println!("Loaded texture '{}': {}x{} pixels", ch, width, height);
-            
-            texture_data.insert(ch, TextureData { pixels, width, height });
-
-            // Load texture for potential GPU use
-            if let Ok(texture) = rl.load_texture_from_image(thread, &image) {
-                textures.insert(ch, texture);
-            } else {
-                println!("Warning: Failed to create GPU texture for {}", path);
-            }
-        }
-
-        TextureManager { texture_data, textures }
+        // Generate procedural Backrooms-style textures
+        manager.generate_backrooms_textures();
+        manager
     }
 
-    #[inline(always)]
-    pub fn get_pixel_color(&self, ch: char, tx: u32, ty: u32) -> Color {
-        if let Some(data) = self.texture_data.get(&ch) {
-            // Ensure coordinates are within bounds
-            let x = tx.min(data.width - 1);
-            let y = ty.min(data.height - 1);
-            let idx = (y * data.width + x) as usize;
-            
-            // Safe array access
-            if idx < data.pixels.len() {
-                data.pixels[idx]
-            } else {
-                Color::MAGENTA // Debug color to indicate out-of-bounds access
+    /// Generate Backrooms-themed textures procedurally
+    fn generate_backrooms_textures(&mut self) {
+        let size = self.texture_size;
+
+        // Yellow wallpaper texture (main Backrooms aesthetic)
+        let mut yellow_wall = Vec::with_capacity(size * size);
+        for y in 0..size {
+            for x in 0..size {
+                // Create a subtle pattern
+                let noise = ((x + y) % 16) as f32 / 16.0;
+                let base_yellow: u8 = 230;
+                let variation = (noise * 20.0) as u8;
+
+                yellow_wall.push(Color::new(
+                    base_yellow.saturating_sub(variation),
+                    (base_yellow.saturating_sub(30)).saturating_sub(variation),
+                    0,
+                    255,
+                ));
             }
-        } else {
-            // Debug: show which characters are missing textures
-            println!("Warning: No texture found for character '{}'", ch);
-            Color::WHITE
         }
+        self.textures.insert("wall".to_string(), yellow_wall);
+
+        // Blue door texture (goal/exit)
+        let mut blue_door = Vec::with_capacity(size * size);
+        for y in 0..size {
+            for x in 0..size {
+                // Create door panels
+                let is_panel = (x / (size / 4)) % 2 == 0 && (y / (size / 4)) % 2 == 0;
+                let blue_val = if is_panel { 200 } else { 150 };
+
+                blue_door.push(Color::new(30, 80, blue_val, 255));
+            }
+        }
+        self.textures.insert("door".to_string(), blue_door);
+
+        // Ceiling texture (off-white with panels)
+        let mut ceiling = Vec::with_capacity(size * size);
+        for y in 0..size {
+            for x in 0..size {
+                let is_seam = x % (size / 4) == 0 || y % (size / 4) == 0;
+                let gray = if is_seam { 200 } else { 240 };
+
+                ceiling.push(Color::new(gray, gray, gray - 10, 255));
+            }
+        }
+        self.textures.insert("ceiling".to_string(), ceiling);
+
+        // Floor texture (dull carpet)
+        let mut floor = Vec::with_capacity(size * size);
+        for y in 0..size {
+            for x in 0..size {
+                let noise = ((x * 7 + y * 13) % 32) as f32 / 32.0;
+                let base = 140;
+                let variation = (noise * 15.0) as u8;
+
+                floor.push(Color::new(
+                    base + variation,
+                    (base + 20) + variation,
+                    base + variation,
+                    255,
+                ));
+            }
+        }
+        self.textures.insert("floor".to_string(), floor);
     }
 
-    pub fn get_texture(&self, ch: char) -> Option<&Texture2D> {
-        self.textures.get(&ch)
+    /// Load texture from raylib (for custom textures)
+    /// Note: This is a placeholder - actual texture loading would require
+    /// converting from Image to pixel data
+    #[allow(dead_code)]
+    pub fn load_texture(&mut self, name: &str, _rl: &mut RaylibHandle, _thread: &RaylibThread, _path: &str) {
+        // For now, just create a default texture
+        // In a real implementation, you would load the image file and convert its pixels
+        let size = self.texture_size;
+        let mut pixels = Vec::with_capacity(size * size);
+        for _ in 0..(size * size) {
+            pixels.push(Color::GRAY);
+        }
+        self.textures.insert(name.to_string(), pixels);
+    }
+
+    /// Get texture data by name
+    pub fn get_texture(&self, name: &str) -> Option<&Vec<Color>> {
+        self.textures.get(name)
+    }
+
+    /// Sample a texture at (u, v) coordinates [0, 1]
+    #[inline]
+    pub fn sample(&self, texture: &[Color], u: f32, v: f32) -> Color {
+        let size = self.texture_size;
+        let x = ((u * size as f32) as usize).min(size - 1);
+        let y = ((v * size as f32) as usize).min(size - 1);
+        texture[y * size + x]
+    }
+
+    /// Sample with nearest-neighbor filtering (faster)
+    #[inline]
+    pub fn sample_point(&self, texture: &[Color], tex_x: usize, tex_y: usize) -> Color {
+        let size = self.texture_size;
+        texture[tex_y.min(size - 1) * size + tex_x.min(size - 1)]
     }
 }

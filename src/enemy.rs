@@ -1,16 +1,21 @@
-// enemy.rs
+// Enemy module (placeholder for future expansion)
+// Can be used to add hostile entities in the Backrooms
 
-use raylib::prelude::*;
+use crate::player::Vector2;
 
-/// Estructura básica de un enemigo
 pub struct Enemy {
-    pub pos: Vector2,    // posición en el mundo
-    pub texture_key: char // clave de textura para render
+    pub pos: Vector2,
+    pub health: i32,
+    pub speed: f32,
 }
 
 impl Enemy {
-    /// Crea un nuevo enemigo
-    pub fn new(x: f32, y: f32, texture_key: char) -> Self {
-        Enemy { pos: Vector2::new(x, y), texture_key }
+    #[allow(dead_code)]
+    pub fn new(x: f32, y: f32) -> Self {
+        Self {
+            pos: Vector2::new(x, y),
+            health: 100,
+            speed: 1.0,
+        }
     }
 }
