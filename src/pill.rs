@@ -4,7 +4,7 @@ use raylib::prelude::*;
 #[derive(Clone, Copy, PartialEq)]
 pub enum PillType {
     Red,   // Bad: -15 HP, anxiety effect
-    Blue,  // Good: +10 HP
+    Blue,  // Good: +10 HP, Bad: -20 seconds on timer
 }
 
 pub struct Pill {

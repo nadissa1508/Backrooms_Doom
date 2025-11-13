@@ -16,11 +16,11 @@ This is a raycasting engine project that creates a playable 3D maze-exploration 
 |---------|--------|--------|-------------|
 | **Aesthetic Quality** | 30 | implemented | Backrooms-themed level with yellow fog, fluorescent lighting effect, and atmospheric design |
 | **60 FPS Performance** | 15 | implemented | Optimized rendering maintaining 60 FPS (displayed on HUD) |
-| **Visual Effects** | 15 | implemented | Multiple effects: fog of war, flashlight, distance shading, damage flash |
+| **Visual Effects** | 15 | implemented | Multiple effects: fog of war, flashlight, distance shading, damage flash, anxiety distortion, pill glitch animations |
 | **Camera System** | 20 | implemented | Mouse-based horizontal rotation with configurable sensitivity |
 | **Minimap** | 10 | implemented | Top-right corner minimap showing full maze layout and player position |
 | **Background Music** | 5 | implemented | Ambient music with dynamic volume based on distance to goal |
-| **Sound Effects** | 10 | implemented | Footstep sounds, damage sounds, victory sound, start sound |
+| **Sound Effects** | 10 | implemented | Footstep sounds (with stop control), damage sounds, heartbeat, victory sound, start sound |
 | **Sprite Animation** | 20 | implemented | Flickering light sprites with animation system |
 | **Welcome Screen** | 5 | implemented | Interactive menu with controls display |
 | **Victory Screen** | 10 | implemented | Victory screen when player reaches goal |
@@ -50,11 +50,13 @@ This is a raycasting engine project that creates a playable 3D maze-exploration 
 
 ### Effects System
 ```rust
-- yellowish Backrooms aesthetic
+- Yellowish Backrooms aesthetic
 - Flashlight with adjustable intensity
-- Damage flash effect
+- Damage flash effect (red tint when taking damage)
+- Anxiety effect (screen distortion from red pills or idle penalty)
 - Distance-based shading
 - Dynamic lighting
+- Glitch animations on pills
 ```
 
 ### Minimap
@@ -77,11 +79,11 @@ This is a raycasting engine project that creates a playable 3D maze-exploration 
 - **Menu Music**: Separate track for menu screen
 
 ### Sound Effects
-- **Footstep Sounds**: Play when player is moving (0.5s interval)
+- **Footstep Sounds**: Play when player is moving (0.5s interval), automatically stops when player stops moving
 - **Start Sound**: Plays when entering gameplay
 - **Victory Sound**: Plays upon reaching the goal
 - **Damage Sound**: Plays when taking damage
-- **Heartbeat Sound**: Plays alongside damage for tension
+- **Heartbeat Sound**: Plays alongside damage for tension and during idle penalty
 
 ### Audio Files Required
 Place in `assets/audio/`:
@@ -105,11 +107,12 @@ src/
 ├── camera.rs        - Mouse-based camera controls
 ├── framebuffer.rs   - Custom rendering buffer
 ├── textures.rs      - Texture management system
-├── audio.rs         - Audio manager
+├── audio.rs         - Audio manager (with footstep control)
 ├── sprite.rs        - Sprite rendering and animation
+├── pill.rs          - Pill system (red/blue pills with effects)
 ├── minimap.rs       - Minimap rendering
-├── ui.rs            - UI rendering (menu, HUD, victory)
-├── effects.rs       - Visual effects system
+├── ui.rs            - UI rendering (menu, HUD, victory, timer)
+├── effects.rs       - Visual effects system (damage, anxiety)
 └── enemy.rs         - Enemy system (future expansion)
 ```
 
@@ -127,6 +130,29 @@ src/
 - **Movement Speed**: 3.0 units/second
 - **Rotation Speed**: 2.5 radians/second
 - **Collision Radius**: 0.3 units
+- **Game Timer**: 3 minutes (180 seconds) to reach the exit
+
+### Pill System
+The game features a risk/reward pill system scattered throughout the maze:
+
+- **Red Pill** (Bad):
+  - **Effect**: -15 HP damage
+  - **Penalty**: Triggers anxiety visual effect (screen distortion)
+  - **Visual**: Red glow with pulsing animation
+
+- **Blue Pill** (Mixed):
+  - **Benefit**: +10 HP healing
+  - **Penalty**: -20 seconds from game timer
+  - **Visual**: Blue glow with pulsing animation
+  - **Trade-off**: Players must decide if the health boost is worth losing time
+
+Both pills display floating text feedback showing their effects when collected.
+
+### Idle Penalty System
+- If the player stands still for **5 seconds**, they take damage
+- Triggers anxiety visual effect and heartbeat sound
+- Encourages constant movement and exploration
+- Resets when player moves again
 
 ### Maze System
 - Loaded from `maze.txt`
@@ -192,9 +218,11 @@ lto = true
 
 ### UI Design
 - **Menu**: Clean text-based interface with glowing title effect
-- **HUD**: 
+- **HUD**:
   - Health bar (top-left)
+  - Countdown timer (top-center, color-coded: green > 60s, yellow 30-60s, red < 30s)
   - FPS counter (top-right)
+  - Floating text feedback for pill collection
   - Minimalist design to not obstruct gameplay
 - **Victory Screen**: Celebratory message with replay option
 

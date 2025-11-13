@@ -111,8 +111,9 @@ fn main() {
             if is_moving {
                 game.audio.play_footstep(delta_time);
             } else {
-                // Reset timer when not moving to prevent delayed footsteps
+                // Reset timer and stop sound when not moving
                 game.audio.reset_footstep_timer();
+                game.audio.stop_footstep();
             }
         }
 

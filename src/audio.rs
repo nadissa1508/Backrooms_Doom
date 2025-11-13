@@ -199,6 +199,13 @@ impl<'a> AudioManager<'a> {
         self.footstep_timer = 0.0;
     }
 
+    /// Stop footstep sound (call when player stops moving)
+    pub fn stop_footstep(&self) {
+        if let Some(ref sound) = self.footstep {
+            sound.stop();
+        }
+    }
+
     /// Play damage sound with heartbeat
     pub fn play_damage(&self) {
         if let Some(ref sound) = self.damage {
@@ -222,7 +229,7 @@ impl<'a> AudioManager<'a> {
     pub fn play_heartbeat(&self) {
         if let Some(ref sound) = self.heartbeat {
             sound.play();
-            println!("💓 Playing heartbeat (idle penalty)");
+            println!("Playing heartbeat (idle penalty)");
         }
     }
 }

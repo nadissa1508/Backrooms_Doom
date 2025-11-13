@@ -213,15 +213,27 @@ impl<'a> GameState<'a> {
                                 ));
                             }
                             PillType::Blue => {
-                                // Blue pill: +10 HP
+                                // Blue pill: +10 HP but -20 seconds on timer
                                 self.player.heal(10);
-                                
+
+                                // Reduce timer by 20 seconds
+                                self.game_timer -= 20.0;
+                                self.game_timer = self.game_timer.max(0.0); // Don't go below 0
+
                                 // Create floating text
                                 self.floating_texts.push(FloatingText::new(
                                     "+10 HP".to_string(),
                                     pill.pos.x,
                                     pill.pos.y,
                                     Color::SKYBLUE,
+                                ));
+
+                                // Add second floating text for timer penalty
+                                self.floating_texts.push(FloatingText::new(
+                                    "-20s".to_string(),
+                                    pill.pos.x,
+                                    pill.pos.y + 0.3,
+                                    Color::ORANGE,
                                 ));
                             }
                         }
