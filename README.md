@@ -7,6 +7,7 @@ A complete raycaster game inspired by The Backrooms aesthetic, built with Rust a
 This is a raycasting engine project that creates a playable 3D maze-exploration game with Backrooms-inspired aesthetics. The player must navigate through a maze to reach the exit while experiencing atmospheric horror elements.
 
 ## Gameplay video
+https://youtu.be/QF6CPHZaBwk
 
 ## Completed Features & Grading Breakdown
 
