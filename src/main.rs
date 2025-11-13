@@ -75,6 +75,11 @@ fn main() {
                     game.audio.stop_music();
                     game.audio.play_victory();
                 }
+                State::GameOver => {
+                    // Stop all music when game over
+                    game.audio.stop_music();
+                    // Could add a game over sound here if you have one
+                }
                 State::Menu => {
                     // Stop gameplay music and play menu music
                     game.audio.stop_music();
@@ -110,8 +115,17 @@ fn main() {
             }
         }
 
+        // Store previous anxiety intensity to detect triggers
+        let prev_anxiety = game.effects.anxiety_intensity;
+
         // Update game state
         game.update(&rl, delta_time);
+
+        // Check if anxiety effect was just triggered (idle penalty)
+        if game.state == State::Playing && game.effects.anxiety_intensity > prev_anxiety && prev_anxiety == 0.0 {
+            // Play heartbeat sound when anxiety effect triggers
+            game.audio.play_heartbeat();
+        }
 
         // Render
         let mut d = rl.begin_drawing(&thread);

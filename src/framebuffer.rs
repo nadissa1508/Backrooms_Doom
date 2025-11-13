@@ -119,6 +119,36 @@ impl Framebuffer {
         }
     }
 
+    /// Apply vignette post-processing effect to the entire framebuffer
+    pub fn apply_vignette_effect(&mut self, intensity: f32, screen_width: usize, screen_height: usize) {
+        if intensity <= 0.0 {
+            return;
+        }
+
+        let center_x = screen_width as f32 / 2.0;
+        let center_y = screen_height as f32 / 2.0;
+
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let dx = (x as f32 - center_x) / center_x;
+                let dy = (y as f32 - center_y) / center_y;
+                let distance = (dx * dx + dy * dy).sqrt();
+                
+                let vignette_strength = (distance * intensity * 0.7).min(0.8);
+                
+                let index = y * self.width + x;
+                let color = self.buffer[index];
+                
+                self.buffer[index] = Color::new(
+                    (color.r as f32 * (1.0 - vignette_strength)) as u8,
+                    (color.g as f32 * (1.0 - vignette_strength)) as u8,
+                    (color.b as f32 * (1.0 - vignette_strength)) as u8,
+                    255,
+                );
+            }
+        }
+    }
+
     /// Optimized render using Image (faster for larger screens)
     #[allow(dead_code)]
     pub fn to_image(&self) -> Image {

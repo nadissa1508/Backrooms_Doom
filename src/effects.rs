@@ -7,6 +7,10 @@ pub struct Effects {
     pub flashlight_enabled: bool,
     pub flashlight_intensity: f32,
     pub damage_flash_timer: f32,
+    // Anxiety effect fields
+    pub anxiety_intensity: f32,  // 0.0 to 1.0
+    pub anxiety_timer: f32,       // Duration of anxiety effect
+    pub screen_shake_offset: (f32, f32), // Random offset for screen shake
 }
 
 impl Effects {
@@ -18,6 +22,9 @@ impl Effects {
             flashlight_enabled: false, // Flashlight disabled
             flashlight_intensity: 1.0,
             damage_flash_timer: 0.0,
+            anxiety_intensity: 0.0,
+            anxiety_timer: 0.0,
+            screen_shake_offset: (0.0, 0.0),
         }
     }
 
@@ -77,11 +84,65 @@ impl Effects {
             self.damage_flash_timer -= delta_time * 2.0;
             self.damage_flash_timer = self.damage_flash_timer.max(0.0);
         }
+
+        // Update anxiety effect
+        if self.anxiety_timer > 0.0 {
+            self.anxiety_timer -= delta_time;
+            self.anxiety_timer = self.anxiety_timer.max(0.0);
+            
+            // Fade out anxiety intensity as timer decreases
+            self.anxiety_intensity = (self.anxiety_timer / 2.0).min(1.0);
+            
+            // Update screen shake with random offset
+            if self.anxiety_intensity > 0.0 {
+                use std::f32::consts::PI;
+                let time_factor = self.anxiety_timer * 10.0;
+                self.screen_shake_offset = (
+                    (time_factor.sin() * 2.0 + (time_factor * 2.3).cos() * 1.5) * self.anxiety_intensity,
+                    (time_factor.cos() * 2.0 + (time_factor * 1.7).sin() * 1.5) * self.anxiety_intensity,
+                );
+            } else {
+                self.screen_shake_offset = (0.0, 0.0);
+            }
+        } else {
+            self.anxiety_intensity = 0.0;
+            self.screen_shake_offset = (0.0, 0.0);
+        }
     }
 
     /// Trigger damage flash
     pub fn trigger_damage_flash(&mut self) {
         self.damage_flash_timer = 0.3;
+    }
+
+    /// Trigger anxiety effect (idle penalty)
+    pub fn trigger_anxiety_effect(&mut self) {
+        self.anxiety_timer = 2.0; // 2 seconds of anxiety effect
+        self.anxiety_intensity = 1.0;
+    }
+
+    /// Apply vignette effect (darkened edges) for anxiety
+    pub fn apply_anxiety_vignette(&self, color: Color, screen_x: usize, screen_y: usize, screen_width: usize, screen_height: usize) -> Color {
+        if self.anxiety_intensity <= 0.0 {
+            return color;
+        }
+
+        let center_x = screen_width as f32 / 2.0;
+        let center_y = screen_height as f32 / 2.0;
+        
+        let dx = (screen_x as f32 - center_x) / center_x;
+        let dy = (screen_y as f32 - center_y) / center_y;
+        let distance = (dx * dx + dy * dy).sqrt();
+        
+        // Stronger vignette effect based on anxiety
+        let vignette_strength = (distance * self.anxiety_intensity * 0.7).min(0.8);
+        
+        Color::new(
+            (color.r as f32 * (1.0 - vignette_strength)) as u8,
+            (color.g as f32 * (1.0 - vignette_strength)) as u8,
+            (color.b as f32 * (1.0 - vignette_strength)) as u8,
+            255,
+        )
     }
 
     /// Calculate shading based on wall orientation

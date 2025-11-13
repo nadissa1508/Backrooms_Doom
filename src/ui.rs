@@ -207,4 +207,116 @@ impl UI {
             Color::new(150, 150, 150, 255),
         );
     }
+
+    /// Render the game over screen
+    pub fn render_game_over(&self, d: &mut RaylibDrawHandle, screen_width: i32, screen_height: i32) {
+        // Dark red overlay
+        d.draw_rectangle(0, 0, screen_width, screen_height, Color::new(20, 0, 0, 220));
+
+        // Game Over message with dramatic effect
+        let title = "TIME'S UP!";
+        let title_size = 60;
+        let title_width = d.measure_text(title, title_size);
+
+        // Shadow effect
+        d.draw_text(
+            title,
+            screen_width / 2 - title_width / 2 + 3,
+            screen_height / 3 + 3,
+            title_size,
+            Color::new(0, 0, 0, 255),
+        );
+
+        // Main text
+        d.draw_text(
+            title,
+            screen_width / 2 - title_width / 2,
+            screen_height / 3,
+            title_size,
+            Color::new(255, 50, 50, 255),
+        );
+
+        // Subtitle
+        let subtitle = "You've been lost in the Backrooms forever...";
+        let subtitle_width = d.measure_text(subtitle, 24);
+        d.draw_text(
+            subtitle,
+            screen_width / 2 - subtitle_width / 2,
+            screen_height / 2,
+            24,
+            Color::new(200, 150, 150, 255),
+        );
+
+        // Instructions with pulsing effect
+        let restart = "Press ENTER to try again";
+        let restart_width = d.measure_text(restart, 20);
+        let pulse = ((d.get_time() * 2.0).sin() * 0.3 + 0.7) as f32;
+        d.draw_text(
+            restart,
+            screen_width / 2 - restart_width / 2,
+            screen_height * 2 / 3,
+            20,
+            Color::new(
+                (200.0 * pulse) as u8,
+                (150.0 * pulse) as u8,
+                (150.0 * pulse) as u8,
+                255,
+            ),
+        );
+    }
+
+    /// Render the countdown timer during gameplay
+    pub fn render_timer(&self, d: &mut RaylibDrawHandle, time_remaining: f32) {
+        // Convert time to minutes:seconds format
+        let minutes = (time_remaining / 60.0).floor() as i32;
+        let seconds = (time_remaining % 60.0).floor() as i32;
+        let timer_text = format!("{:01}:{:02}", minutes, seconds);
+
+        // Position at top center of screen
+        let screen_width = d.get_screen_width();
+        let timer_size = 32;
+        let text_width = d.measure_text(&timer_text, timer_size);
+        let x = screen_width / 2 - text_width / 2;
+        let y = 10;
+
+        // Background box for better visibility
+        let padding = 10;
+        d.draw_rectangle(
+            x - padding,
+            y - 5,
+            text_width + padding * 2,
+            timer_size + 10,
+            Color::new(0, 0, 0, 180),
+        );
+
+        // Color changes based on time remaining
+        let timer_color = if time_remaining > 60.0 {
+            Color::new(200, 200, 200, 255) // White when plenty of time
+        } else if time_remaining > 30.0 {
+            Color::new(255, 200, 50, 255)  // Yellow when less than 1 minute
+        } else {
+            // Red and pulsing when less than 30 seconds
+            let pulse = ((d.get_time() * 4.0).sin() * 0.3 + 0.7) as f32;
+            Color::new(255, (50.0 * pulse) as u8, (50.0 * pulse) as u8, 255)
+        };
+
+        // Draw the timer
+        d.draw_text(&timer_text, x, y, timer_size, timer_color);
+
+        // Add warning text when time is running out
+        if time_remaining <= 10.0 && time_remaining > 0.0 {
+            let warning = "HURRY!";
+            let warning_size = 20;
+            let warning_width = d.measure_text(warning, warning_size);
+            let pulse = ((d.get_time() * 5.0).sin() * 0.5 + 0.5) as f32;
+            d.draw_text(
+                warning,
+                screen_width / 2 - warning_width / 2,
+                y + timer_size + 10,
+                warning_size,
+                Color::new(255, (100.0 * pulse) as u8, 0, (255.0 * pulse) as u8),
+            );
+        }
+    }
 }
+

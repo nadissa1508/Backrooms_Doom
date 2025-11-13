@@ -217,4 +217,12 @@ impl<'a> AudioManager<'a> {
             println!("Playing victory sound");
         }
     }
+
+    /// Play heartbeat sound (for idle penalty/anxiety)
+    pub fn play_heartbeat(&self) {
+        if let Some(ref sound) = self.heartbeat {
+            sound.play();
+            println!("💓 Playing heartbeat (idle penalty)");
+        }
+    }
 }

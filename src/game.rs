@@ -25,6 +25,8 @@ pub struct GameState<'a> {
     pub framebuffer: Framebuffer,
     pub state: State,
     pub time_in_darkness: f32,
+    pub game_timer: f32, // Timer in seconds (starts at 180.0 for 3 minutes)
+    pub idle_timer: f32,  // Tracks time since last movement
 }
 
 #[derive(PartialEq, Copy, Clone)]
@@ -32,6 +34,7 @@ pub enum State {
     Menu,
     Playing,
     Victory,
+    GameOver,
 }
 
 impl<'a> GameState<'a> {
@@ -80,6 +83,8 @@ impl<'a> GameState<'a> {
             framebuffer,
             state: State::Menu,
             time_in_darkness: 0.0,
+            game_timer: 180.0, // 3 minutes = 180 seconds
+            idle_timer: 0.0,   // Starts at 0, no idle penalty yet
         })
     }
 
@@ -90,9 +95,49 @@ impl<'a> GameState<'a> {
                     // Transition to playing (audio handled in main.rs)
                     self.state = State::Playing;
                     self.camera.reset();
+                    // Reset timer when starting a new game
+                    self.game_timer = 180.0;
                 }
             }
             State::Playing => {
+                // Update game timer - count down
+                self.game_timer -= delta_time;
+                
+                // Check if time ran out
+                if self.game_timer <= 0.0 {
+                    self.game_timer = 0.0;
+                    self.state = State::GameOver;
+                    return; // Don't process player input if game over
+                }
+
+                // Track idle time and apply penalty
+                let is_moving = rl.is_key_down(KeyboardKey::KEY_W)
+                    || rl.is_key_down(KeyboardKey::KEY_S)
+                    || rl.is_key_down(KeyboardKey::KEY_A)
+                    || rl.is_key_down(KeyboardKey::KEY_D);
+
+                if is_moving {
+                    // Player is moving, reset idle timer
+                    self.idle_timer = 0.0;
+                } else {
+                    // Player is idle, increment timer
+                    self.idle_timer += delta_time;
+                    
+                    // Check if idle for more than 5 seconds
+                    if self.idle_timer >= 5.0 {
+                        // Apply idle penalty
+                        self.player.take_damage(10);
+                        
+                        // Trigger anxiety effect
+                        self.effects.trigger_anxiety_effect();
+                        
+                        // Reset idle timer to prevent continuous damage
+                        self.idle_timer = 0.0;
+                        
+                        // Note: Heartbeat sound will be played in main.rs
+                    }
+                }
+
                 // Update camera rotation
                 self.camera.update(rl, &mut self.player, delta_time);
 
@@ -143,6 +188,14 @@ impl<'a> GameState<'a> {
                     self.state = State::Menu;
                 }
             }
+            State::GameOver => {
+                if rl.is_key_pressed(KeyboardKey::KEY_ENTER) {
+                    // Reset game and return to menu
+                    self.player = Player::new(self.maze.start_pos.0, self.maze.start_pos.1);
+                    self.game_timer = 180.0;
+                    self.state = State::Menu;
+                }
+            }
         }
     }
 
@@ -153,14 +206,43 @@ impl<'a> GameState<'a> {
             }
             State::Playing => {
                 self.render_3d_view();
+                
+                // Apply anxiety vignette effect if active
+                if self.effects.anxiety_intensity > 0.0 {
+                    self.framebuffer.apply_vignette_effect(
+                        self.effects.anxiety_intensity,
+                        self.framebuffer.width,
+                        self.framebuffer.height
+                    );
+                }
+                
                 self.framebuffer.render(d, 1);
+                
+                // Render screen shake overlay (subtle red tint during anxiety)
+                if self.effects.anxiety_intensity > 0.0 {
+                    let shake_alpha = (self.effects.anxiety_intensity * 30.0) as u8;
+                    d.draw_rectangle(
+                        0, 0,
+                        d.get_screen_width(),
+                        d.get_screen_height(),
+                        Color::new(80, 0, 0, shake_alpha),
+                    );
+                }
+                
                 self.minimap.render(d, &self.maze, &self.player);
                 self.ui.render_hud(d, &self.player, d.get_fps());
+                // Render timer overlay
+                self.ui.render_timer(d, self.game_timer);
             }
             State::Victory => {
                 self.render_3d_view();
                 self.framebuffer.render(d, 1);
                 self.ui.render_victory(d, d.get_screen_width(), d.get_screen_height());
+            }
+            State::GameOver => {
+                self.render_3d_view();
+                self.framebuffer.render(d, 1);
+                self.ui.render_game_over(d, d.get_screen_width(), d.get_screen_height());
             }
         }
     }
