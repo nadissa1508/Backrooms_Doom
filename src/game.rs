@@ -9,7 +9,9 @@ use crate::minimap::Minimap;
 use crate::ui::UI;
 use crate::effects::Effects;
 use crate::framebuffer::Framebuffer;
+use crate::pill::{Pill, PillType, FloatingText};
 use raylib::prelude::*;
+use rand::Rng;
 
 pub struct GameState<'a> {
     pub player: Player,
@@ -27,6 +29,8 @@ pub struct GameState<'a> {
     pub time_in_darkness: f32,
     pub game_timer: f32, // Timer in seconds (starts at 180.0 for 3 minutes)
     pub idle_timer: f32,  // Tracks time since last movement
+    pub pills: Vec<Pill>,
+    pub floating_texts: Vec<FloatingText>,
 }
 
 #[derive(PartialEq, Copy, Clone)]
@@ -69,6 +73,19 @@ impl<'a> GameState<'a> {
         sprites.push(Sprite::new_flickering_light(5.0, 5.0));
         sprites.push(Sprite::new_flickering_light(10.0, 10.0));
 
+        // Create pills from maze pill_positions
+        let mut pills = Vec::new();
+        let mut rng = rand::thread_rng();
+        for (x, y) in &maze.pill_positions {
+            // Randomly assign red or blue pill type
+            let pill_type = if rng.gen_bool(0.5) {
+                PillType::Red
+            } else {
+                PillType::Blue
+            };
+            pills.push(Pill::new(*x, *y, pill_type));
+        }
+
         Ok(Self {
             player,
             maze,
@@ -85,6 +102,8 @@ impl<'a> GameState<'a> {
             time_in_darkness: 0.0,
             game_timer: 180.0, // 3 minutes = 180 seconds
             idle_timer: 0.0,   // Starts at 0, no idle penalty yet
+            pills,
+            floating_texts: Vec::new(),
         })
     }
 
@@ -168,6 +187,53 @@ impl<'a> GameState<'a> {
                     sprite.update(delta_time);
                 }
 
+                // Update pills (glow animation)
+                for pill in &mut self.pills {
+                    pill.update(delta_time);
+                }
+
+                // Check for pill collection
+                for pill in &mut self.pills {
+                    if !pill.collected && pill.can_collect(self.player.pos.x, self.player.pos.y, 0.6) {
+                        pill.collected = true;
+                        
+                        // Apply pill effect
+                        match pill.pill_type {
+                            PillType::Red => {
+                                // Red pill: -15 HP and trigger anxiety
+                                self.player.take_damage(15);
+                                self.effects.trigger_anxiety_effect();
+                                
+                                // Create floating text
+                                self.floating_texts.push(FloatingText::new(
+                                    "-15 HP".to_string(),
+                                    pill.pos.x,
+                                    pill.pos.y,
+                                    Color::RED,
+                                ));
+                            }
+                            PillType::Blue => {
+                                // Blue pill: +10 HP
+                                self.player.heal(10);
+                                
+                                // Create floating text
+                                self.floating_texts.push(FloatingText::new(
+                                    "+10 HP".to_string(),
+                                    pill.pos.x,
+                                    pill.pos.y,
+                                    Color::SKYBLUE,
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                // Update floating texts
+                self.floating_texts.retain_mut(|text| {
+                    text.update(delta_time);
+                    text.lifetime > 0.0
+                });
+
                 // Update effects
                 self.effects.update(delta_time);
 
@@ -233,6 +299,8 @@ impl<'a> GameState<'a> {
                 self.ui.render_hud(d, &self.player, d.get_fps());
                 // Render timer overlay
                 self.ui.render_timer(d, self.game_timer);
+                // Render floating texts
+                self.render_floating_texts(d);
             }
             State::Victory => {
                 self.render_3d_view();
@@ -348,5 +416,161 @@ impl<'a> GameState<'a> {
                 }
             }
         }
+        
+        // Render pills into the framebuffer
+        self.render_pills_to_framebuffer(&ray_hits);
     }
+
+    // Add these methods INSIDE the impl<'a> GameState<'a> { } block, BEFORE the final closing brace
+
+    fn render_pills_to_framebuffer(&mut self, ray_hits: &[crate::caster::RayHit]) {
+        let screen_width = self.framebuffer.width as f32;
+        let screen_height = self.framebuffer.height as f32;
+
+        // Get pill textures
+        let red_pill_texture = self.textures.get_texture("red_pill");
+        let blue_pill_texture = self.textures.get_texture("blue_pill");
+
+        for pill in &self.pills {
+            if pill.collected {
+                continue;
+            }
+
+            // Calculate pill position relative to player
+            let dx = pill.pos.x - self.player.pos.x;
+            let dy = pill.pos.y - self.player.pos.y;
+            let distance = (dx * dx + dy * dy).sqrt();
+
+            // Rotate to player's view space (correct rotation for view transformation)
+            let cos_angle = self.player.angle.cos();
+            let sin_angle = self.player.angle.sin();
+            let transformed_x = dy * cos_angle - dx * sin_angle;
+            let transformed_y = dx * cos_angle + dy * sin_angle;
+
+            // Skip if behind player
+            if transformed_y <= 0.1 {
+                continue;
+            }
+
+            // Project to screen space
+            let fov = std::f32::consts::PI / 3.0;
+            let screen_x = (screen_width / 2.0) * (1.0 + transformed_x / (transformed_y * (fov / 2.0).tan()));
+
+            // Calculate which ray column this pill is in
+            let ray_index = ((screen_x / screen_width) * ray_hits.len() as f32) as usize;
+
+            // Improved occlusion check - check multiple rays around the pill
+            let mut is_occluded = false;
+            let check_radius = 2; // Check 2 rays on each side
+            for offset in -(check_radius as i32)..=(check_radius as i32) {
+                let check_index = (ray_index as i32 + offset).max(0).min(ray_hits.len() as i32 - 1) as usize;
+                if check_index < ray_hits.len() {
+                    // If there's a wall closer than the pill, it's occluded
+                    if ray_hits[check_index].distance < distance - 0.3 {
+                        is_occluded = true;
+                        break;
+                    }
+                }
+            }
+
+            if is_occluded {
+                continue;
+            }
+
+            let sprite_size = (screen_height / transformed_y) * 0.15; // Smaller size
+
+            // Skip if off screen
+            if screen_x < -sprite_size || screen_x > screen_width + sprite_size {
+                continue;
+            }
+
+            // Position pill on the floor (lower on screen)
+            let screen_y = screen_height * 0.65;
+            
+            // Select texture based on pill type
+            let texture = match pill.pill_type {
+                crate::pill::PillType::Red => red_pill_texture,
+                crate::pill::PillType::Blue => blue_pill_texture,
+            };
+            
+            if let Some(tex) = texture {
+                // Draw textured sprite - use fixed aspect ratio based on texture
+                let aspect_ratio = tex.width as f32 / tex.height as f32;
+                let sprite_width = sprite_size * 2.0 * aspect_ratio;
+                let sprite_height = sprite_size * 2.0;
+                
+                let sprite_left = screen_x - sprite_width / 2.0;
+                let sprite_top = screen_y - sprite_height / 2.0;
+                
+                // Sample and draw the texture with proper aspect ratio into framebuffer
+                let tex_step_x = tex.width as f32 / sprite_width;
+                let tex_step_y = tex.height as f32 / sprite_height;
+                
+                for screen_pixel_y in 0..(sprite_height as usize) {
+                    let y = (sprite_top as usize).saturating_add(screen_pixel_y);
+                    if y >= self.framebuffer.height {
+                        continue;
+                    }
+                    
+                    let tex_y = ((screen_pixel_y as f32 * tex_step_y) as usize).min(tex.height - 1);
+                    
+                    for screen_pixel_x in 0..(sprite_width as usize) {
+                        let x = (sprite_left as usize).saturating_add(screen_pixel_x);
+                        if x >= self.framebuffer.width {
+                            continue;
+                        }
+                        
+                        let tex_x = ((screen_pixel_x as f32 * tex_step_x) as usize).min(tex.width - 1);
+                        let color = tex.sample_point(tex_x, tex_y);
+                        
+                        // Skip transparent pixels
+                        if color.a < 10 {
+                            continue;
+                        }
+                        
+                        // Draw directly to framebuffer
+                        self.framebuffer.set_pixel(x, y, color);
+                    }
+                }
+            }
+        }
+    }
+
+    fn render_floating_texts(&self, d: &mut RaylibDrawHandle) {
+        let screen_width = d.get_screen_width() as f32;
+        let screen_height = d.get_screen_height() as f32;
+        
+        for text in &self.floating_texts {
+            // Calculate text position relative to player
+            let dx = text.pos.x - self.player.pos.x;
+            let dy = text.pos.y - self.player.pos.y;
+            
+            // Rotate to player's view space
+            let cos_angle = self.player.angle.cos();
+            let sin_angle = self.player.angle.sin();
+            let transformed_x = dx * cos_angle + dy * sin_angle;
+            let transformed_y = -dx * sin_angle + dy * cos_angle;
+            
+            // Skip if behind player
+            if transformed_y <= 0.1 {
+                continue;
+            }
+            
+            // Project to screen space
+            let fov = std::f32::consts::PI / 3.0;
+            let screen_x = (screen_width / 2.0) * (1.0 + transformed_x / (transformed_y * (fov / 2.0).tan()));
+            
+            // Apply floating offset
+            let screen_y = (screen_height / 2.0) - (text.z * 20.0);
+            
+            // Calculate alpha based on lifetime
+            let alpha = ((text.lifetime / 1.0) * 255.0).min(255.0) as u8;
+            let mut color = text.color;
+            color.a = alpha;
+            
+            // Draw text
+            d.draw_text(&text.text, screen_x as i32 - 30, screen_y as i32, 24, color);
+        }
+    }
+
 }

@@ -7,6 +7,7 @@ mod framebuffer;
 mod game;
 mod maze;
 mod minimap;
+mod pill;
 mod player;
 mod sprite;
 mod textures;

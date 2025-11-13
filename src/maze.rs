@@ -7,6 +7,7 @@ pub struct Maze {
     pub tile_size: f32,
     pub start_pos: (f32, f32),
     pub goal_pos: (f32, f32),
+    pub pill_positions: Vec<(f32, f32)>, // Positions where 'p' was found
 }
 
 impl Maze {
@@ -15,7 +16,7 @@ impl Maze {
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read maze file: {}", e))?;
 
-        let map: Vec<Vec<char>> = content
+        let mut map: Vec<Vec<char>> = content
             .lines()
             .filter(|line| !line.is_empty())
             .map(|line| line.chars().collect())
@@ -31,13 +32,19 @@ impl Maze {
         // Find start (S) and goal (E - exit door) positions
         let mut start_pos = (1.5 * tile_size, 1.5 * tile_size);
         let mut goal_pos = (1.5 * tile_size, 1.5 * tile_size);
+        let mut pill_positions = Vec::new();
 
-        for (y, row) in map.iter().enumerate() {
-            for (x, &tile) in row.iter().enumerate() {
-                if tile == 'S' {
+        for (y, row) in map.iter_mut().enumerate() {
+            for (x, tile) in row.iter_mut().enumerate() {
+                if *tile == 'S' {
                     start_pos = ((x as f32 + 0.5) * tile_size, (y as f32 + 0.5) * tile_size);
-                } else if tile == 'E' {
+                } else if *tile == 'E' {
                     goal_pos = ((x as f32 + 0.5) * tile_size, (y as f32 + 0.5) * tile_size);
+                } else if *tile == 'p' {
+                    // Found a pill spawn location
+                    pill_positions.push(((x as f32 + 0.5) * tile_size, (y as f32 + 0.5) * tile_size));
+                    // Replace 'p' with '.' so it's walkable
+                    *tile = '.';
                 }
             }
         }
@@ -49,6 +56,7 @@ impl Maze {
             tile_size,
             start_pos,
             goal_pos,
+            pill_positions,
         })
     }
 

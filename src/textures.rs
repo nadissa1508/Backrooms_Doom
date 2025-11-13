@@ -60,6 +60,8 @@ impl TextureManager {
             ("wall_exit", "assets/textures/wall_exit.png"),
             ("floor", "assets/textures/floor2.png"),
             ("ceiling", "assets/textures/ceiling.png"),
+            ("red_pill", "assets/textures/red_pill.png"),
+            ("blue_pill", "assets/textures/blue_pill.png"),
         ];
 
         let mut success_count = 0;
