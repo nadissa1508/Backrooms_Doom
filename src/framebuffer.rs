@@ -1,115 +1,238 @@
-// framebuffer.rs
 use raylib::prelude::*;
 
 pub struct Framebuffer {
-    pub width: u32,
-    pub height: u32,
-    pub color_buffer: Image,
-    pub z_buffer: Vec<f32>,
-    background_color: Color,
-    current_color: Color,
-    texture: Option<Texture2D>, // Textura persistente para la GPU
+    pub width: usize,
+    pub height: usize,
+    buffer: Vec<Color>,
+    // Cache for texture rendering
+    image: Option<Image>,
+    texture: Option<Texture2D>,
 }
 
 impl Framebuffer {
-    /// Crea un nuevo framebuffer con un Z-buffer inicializado
-    pub fn new(width: u32, height: u32, background_color: Color) -> Self {
-        let color_buffer = Image::gen_image_color(width as i32, height as i32, background_color);
-
-        let z_buffer = vec![f32::INFINITY; (width * height) as usize];
-
+    pub fn new(width: usize, height: usize) -> Self {
         Self {
             width,
             height,
-            color_buffer,
-            z_buffer,
-            background_color,
-            current_color: Color::WHITE,
+            buffer: vec![Color::BLACK; width * height],
+            image: None,
             texture: None,
         }
     }
 
-    /// Limpia el framebuffer y el Z-buffer sin crear una nueva imagen
-    pub fn clear(&mut self) {
-        self.color_buffer.clear_background(self.background_color);
-        self.z_buffer.fill(f32::INFINITY);
+    /// Clear the framebuffer with a color
+    pub fn clear(&mut self, color: Color) {
+        self.buffer.fill(color);
     }
 
-    /// Dibuja un píxel con verificación de límites
-    pub fn set_pixel(&mut self, x: i32, y: i32) {
-        if x >= 0 && y >= 0 && x < self.width as i32 && y < self.height as i32 {
-            self.color_buffer.draw_pixel(x, y, self.current_color);
+    /// Set a pixel at (x, y) with bounds checking
+    #[inline]
+    pub fn set_pixel(&mut self, x: usize, y: usize, color: Color) {
+        if x < self.width && y < self.height {
+            self.buffer[y * self.width + x] = color;
         }
     }
 
-    /// Dibuja un píxel con Z-buffer (solo si es más cercano)
-    pub fn set_pixel_depth(&mut self, x: i32, y: i32, depth: f32) {
-        if x >= 0 && y >= 0 && x < self.width as i32 && y < self.height as i32 {
-            let idx = (y as u32 * self.width + x as u32) as usize;
-            if depth < self.z_buffer[idx] {
-                self.z_buffer[idx] = depth;
-                self.color_buffer.draw_pixel(x, y, self.current_color);
+    /// Set a pixel without bounds checking (faster, use carefully)
+    #[inline]
+    pub unsafe fn set_pixel_unchecked(&mut self, x: usize, y: usize, color: Color) {
+        *self.buffer.get_unchecked_mut(y * self.width + x) = color;
+    }
+
+    /// Draw a vertical line (optimized for raycasting)
+    pub fn draw_vertical_line(&mut self, x: usize, y_start: usize, y_end: usize, color: Color) {
+        if x >= self.width {
+            return;
+        }
+
+        let y_start = y_start.min(self.height);
+        let y_end = y_end.min(self.height);
+
+        for y in y_start..y_end {
+            self.buffer[y * self.width + x] = color;
+        }
+    }
+
+    /// Draw a vertical line with texture sampling
+    pub fn draw_textured_line(
+        &mut self,
+        x: usize,
+        y_start: usize,
+        y_end: usize,
+        texture: &[Color],
+        tex_width: usize,
+        tex_height: usize,
+        tex_x: usize,
+        shade: f32,
+    ) {
+        if x >= self.width || y_start >= y_end {
+            return;
+        }
+
+        let line_height = y_end - y_start;
+        let y_start_clamped = y_start.min(self.height);
+        let y_end_clamped = y_end.min(self.height);
+
+        for y in y_start_clamped..y_end_clamped {
+            // Calculate texture Y coordinate
+            let tex_y = ((y - y_start) * tex_height / line_height).min(tex_height - 1);
+            let tex_index = tex_y * tex_width + tex_x;
+
+            if let Some(&mut ref mut pixel) = self.buffer.get_mut(y * self.width + x) {
+                if let Some(&tex_color) = texture.get(tex_index) {
+                    // Apply shading
+                    *pixel = Color::new(
+                        (tex_color.r as f32 * shade) as u8,
+                        (tex_color.g as f32 * shade) as u8,
+                        (tex_color.b as f32 * shade) as u8,
+                        255,
+                    );
+                }
             }
         }
     }
 
-    /// Cambia el color de fondo
-    pub fn set_background_color(&mut self, color: Color) {
-        self.background_color = color;
-    }
-
-    /// Cambia el color actual de dibujo
-    pub fn set_current_color(&mut self, color: Color) {
-        self.current_color = color;
-    }
-
-    /// Guarda el framebuffer en un archivo
-    pub fn render_to_file(&self, file_path: &str) {
-        self.color_buffer.export_image(file_path);
-    }
-
-    /// Inicializa la textura persistente (solo la primera vez)
-    pub fn init_texture(&mut self, window: &mut RaylibHandle, raylib_thread: &RaylibThread) {
-        if self.texture.is_none() {
-            if let Ok(tex) = window.load_texture_from_image(raylib_thread, &self.color_buffer) {
-                self.texture = Some(tex);
+    /// Render the framebuffer to the screen using raylib (optimized with draw_pixel)
+    pub fn render(&self, d: &mut RaylibDrawHandle, scale: i32) {
+        if scale == 1 {
+            // Fast path for 1:1 rendering - use draw_pixel
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    let color = self.buffer[y * self.width + x];
+                    d.draw_pixel(x as i32, y as i32, color);
+                }
+            }
+        } else {
+            // Scaled rendering - use draw_rectangle but with larger blocks
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    let color = self.buffer[y * self.width + x];
+                    d.draw_rectangle(
+                        (x as i32) * scale,
+                        (y as i32) * scale,
+                        scale,
+                        scale,
+                        color,
+                    );
+                }
             }
         }
     }
 
-    /// Actualiza la textura en la GPU y la dibuja en pantalla
-    pub fn swap_buffers(&mut self, window: &mut RaylibHandle, raylib_thread: &RaylibThread) {
-        // Inicializar textura si no existe
-        if self.texture.is_none() {
-            self.init_texture(window, raylib_thread);
+    /// Optimized render using Image (faster for larger screens)
+    #[allow(dead_code)]
+    pub fn to_image(&self) -> Image {
+        let img = Image::gen_image_color(self.width as i32, self.height as i32, Color::BLACK);
+
+        // Note: Direct pixel manipulation would require unsafe access
+        // For now, this is a placeholder implementation
+        img
+    }
+
+    /// Apply fog effect based on distance
+    #[inline]
+    pub fn apply_fog(color: Color, distance: f32, max_distance: f32, fog_color: Color) -> Color {
+        let fog_factor = (distance / max_distance).min(1.0);
+
+        Color::new(
+            ((1.0 - fog_factor) * color.r as f32 + fog_factor * fog_color.r as f32) as u8,
+            ((1.0 - fog_factor) * color.g as f32 + fog_factor * fog_color.g as f32) as u8,
+            ((1.0 - fog_factor) * color.b as f32 + fog_factor * fog_color.b as f32) as u8,
+            255,
+        )
+    }
+
+    /// Draw textured floor span with perspective correction
+    /// This renders a horizontal span of floor texture for a given screen row
+    pub fn draw_textured_floor_span(
+        &mut self,
+        y: usize,
+        x_start: usize,
+        x_end: usize,
+        texture: &[Color],
+        tex_width: usize,
+        tex_height: usize,
+        player_x: f32,
+        player_y: f32,
+        player_angle: f32,
+        distance: f32,
+        fog_distance: f32,
+    ) {
+        if y >= self.height {
+            return;
         }
 
-        if let Some(tex) = &mut self.texture {
-            // Obtenemos los píxeles como Vec<Color>
-            let pixels: Vec<Color> = self.color_buffer.get_image_data().to_vec();;
+        let x_start = x_start.min(self.width);
+        let x_end = x_end.min(self.width);
 
-            // Convertimos Vec<Color> -> Vec<u8> (RGBA)
-            let mut raw: Vec<u8> = Vec::with_capacity(pixels.len() * 4);
-            for c in pixels {
-                raw.push(c.r);
-                raw.push(c.g);
-                raw.push(c.b);
-                raw.push(c.a);
-            }
-
-            tex.update_texture_rec(
-                Rectangle {
-                    x: 0.0,
-                    y: 0.0,
-                    width: tex.width() as f32,
-                    height: tex.height() as f32,
-                },
-                &raw,
+        // Improved floor texture mapping with proper perspective
+        // Calculate row distance from player
+        let row_distance = (self.height as f32 / 2.0) / (y as f32 - self.height as f32 / 2.0).max(1.0);
+        
+        for x in x_start..x_end {
+            // Calculate the angle for this column
+            let camera_x = 2.0 * x as f32 / self.width as f32 - 1.0;
+            let ray_angle = player_angle + camera_x * 0.5; // FOV factor
+            
+            // Calculate floor position
+            let floor_x = player_x + ray_angle.cos() * row_distance * 0.5;
+            let floor_y = player_y + ray_angle.sin() * row_distance * 0.5;
+            
+            // Sample texture with tiling
+            let tex_u = (floor_x.abs() * 2.0) as usize % tex_width;
+            let tex_v = (floor_y.abs() * 2.0) as usize % tex_height;
+            
+            let tex_index = (tex_v * tex_width + tex_u).min(texture.len() - 1);
+            let base_color = texture[tex_index];
+            
+            // Minimal fog/shading for better visibility
+            let shade_factor = 0.9; // Keep floor bright
+            let shaded_color = Color::new(
+                (base_color.r as f32 * shade_factor) as u8,
+                (base_color.g as f32 * shade_factor) as u8,
+                (base_color.b as f32 * shade_factor) as u8,
+                255,
             );
+            
+            self.buffer[y * self.width + x] = shaded_color;
+        }
+    }
 
-            let mut renderer = window.begin_drawing(raylib_thread);
-            renderer.clear_background(Color::BLACK);
-            renderer.draw_texture(tex, 0, 0, Color::WHITE);
+    /// Draw textured ceiling span (similar to floor but can be simpler)
+    pub fn draw_textured_ceiling_span(
+        &mut self,
+        y: usize,
+        x_start: usize,
+        x_end: usize,
+        texture: &[Color],
+        tex_width: usize,
+        tex_height: usize,
+        player_x: f32,
+        player_y: f32,
+    ) {
+        if y >= self.height {
+            return;
+        }
+
+        let x_start = x_start.min(self.width);
+        let x_end = x_end.min(self.width);
+
+        // Simple ceiling texture mapping based on player position with tiling
+        let tex_u = (player_x * 2.0) as usize % tex_width;
+        let tex_v = (player_y * 2.0) as usize % tex_height;
+        let tex_index = (tex_v * tex_width + tex_u).min(texture.len() - 1);
+        let color = texture[tex_index];
+
+        // Ceiling is slightly darker than walls (subtle ambient occlusion)
+        let darkened = Color::new(
+            (color.r as f32 * 0.85) as u8,
+            (color.g as f32 * 0.85) as u8,
+            (color.b as f32 * 0.85) as u8,
+            255,
+        );
+
+        for x in x_start..x_end {
+            self.buffer[y * self.width + x] = darkened;
         }
     }
 }
