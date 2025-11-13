@@ -498,38 +498,78 @@ impl<'a> GameState<'a> {
                 let aspect_ratio = tex.width as f32 / tex.height as f32;
                 let sprite_width = sprite_size * 2.0 * aspect_ratio;
                 let sprite_height = sprite_size * 2.0;
-                
+
                 let sprite_left = screen_x - sprite_width / 2.0;
                 let sprite_top = screen_y - sprite_height / 2.0;
-                
+
+                // Glitch effect parameters based on glow_timer
+                let glitch_intensity = (pill.glow_timer * 3.0).sin() * 0.5 + 0.5; // 0.0 to 1.0
+                let glitch_offset = ((pill.glow_timer * 7.0).sin() * glitch_intensity * 3.0) as i32;
+                let rgb_separation = (glitch_intensity * 2.0) as i32;
+
+                // Random scanline glitch every few seconds
+                let scanline_glitch = ((pill.glow_timer * 0.5).sin() * 10.0) as i32;
+
                 // Sample and draw the texture with proper aspect ratio into framebuffer
                 let tex_step_x = tex.width as f32 / sprite_width;
                 let tex_step_y = tex.height as f32 / sprite_height;
-                
+
                 for screen_pixel_y in 0..(sprite_height as usize) {
                     let y = (sprite_top as usize).saturating_add(screen_pixel_y);
                     if y >= self.framebuffer.height {
                         continue;
                     }
-                    
+
+                    // Add horizontal glitch displacement per scanline
+                    let row_glitch = if (y as i32 + scanline_glitch) % 7 == 0 {
+                        glitch_offset
+                    } else {
+                        0
+                    };
+
                     let tex_y = ((screen_pixel_y as f32 * tex_step_y) as usize).min(tex.height - 1);
-                    
+
                     for screen_pixel_x in 0..(sprite_width as usize) {
                         let x = (sprite_left as usize).saturating_add(screen_pixel_x);
                         if x >= self.framebuffer.width {
                             continue;
                         }
-                        
+
                         let tex_x = ((screen_pixel_x as f32 * tex_step_x) as usize).min(tex.width - 1);
-                        let color = tex.sample_point(tex_x, tex_y);
-                        
+
+                        // RGB channel separation glitch effect
+                        let color_r = tex.sample_point(
+                            (tex_x as i32 + rgb_separation).max(0).min(tex.width as i32 - 1) as usize,
+                            tex_y
+                        );
+                        let color_g = tex.sample_point(tex_x, tex_y);
+                        let color_b = tex.sample_point(
+                            (tex_x as i32 - rgb_separation).max(0).min(tex.width as i32 - 1) as usize,
+                            tex_y
+                        );
+
+                        // Combine RGB channels
+                        let mut glitched_color = Color::new(
+                            color_r.r,
+                            color_g.g,
+                            color_b.b,
+                            color_g.a
+                        );
+
                         // Skip transparent pixels
-                        if color.a < 10 {
+                        if glitched_color.a < 10 {
                             continue;
                         }
-                        
-                        // Draw directly to framebuffer
-                        self.framebuffer.set_pixel(x, y, color);
+
+                        // Color distortion effect
+                        if glitch_intensity > 0.7 {
+                            glitched_color.r = glitched_color.r.saturating_add((glitch_intensity * 30.0) as u8);
+                            glitched_color.g = glitched_color.g.saturating_sub((glitch_intensity * 20.0) as u8);
+                        }
+
+                        // Draw to framebuffer with horizontal glitch offset
+                        let final_x = (x as i32 + row_glitch).max(0).min(self.framebuffer.width as i32 - 1) as usize;
+                        self.framebuffer.set_pixel(final_x, y, glitched_color);
                     }
                 }
             }
